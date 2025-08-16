@@ -8,9 +8,13 @@ const c = @cImport({
     // @cInclude("zlib.h");
 });
 
+const util = @import("util.zig");
+
 pub fn main() !void {
+    try bufferedPrint();
+
     // const gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    try basicFlateExample();
+    // try basicFlateExample();
     // try testing.expectEqualSlices(u8, expected_plain, out.items);
 
     // Allocator for managing memory
@@ -33,7 +37,6 @@ pub fn main() !void {
 
     // Print the decompressed data as a string
     // std.debug.print("Decompressed data: {s}\n", .{decompressed_data});
-    //try bufferedPrint();
 
     // const ret = c.printf("hello from c world!\n");
     // std.debug.print("C call return value: {d}\n", .{ret});
@@ -90,89 +93,98 @@ pub fn basicFlateExample() !void {
     }
 }
 
-// pub fn bufferedPrint() !void {
-//     // Get the allocator
-//     const allocator = std.heap.page_allocator;
+pub const ByteReader = struct {
+    buffer: []const u8,
+    position: usize,
 
-//     // Open the file
-//     const file = try std.fs.cwd().openFile("archers.aoe2record", .{});
-//     defer file.close();
+    pub fn init(buffer: []const u8) ByteReader {
+        return ByteReader{
+            .buffer = buffer,
+            .position = 0,
+        };
+    }
 
-//     // Get file size
-//     const file_size = try file.getEndPos();
+    pub fn read_bytes(self: *ByteReader, count: u64) []const u8 {
+        if (self.position + count > self.buffer.len) {
+            std.process.exit(1);
+        }
 
-//     // Allocate buffer to hold file contents
-//     const buffer = try allocator.alloc(u8, std.math.cast(usize, file_size) orelse return error.FileTooLarge);
-//     defer allocator.free(buffer);
+        const start = self.position;
+        self.position += count;
+        return self.buffer[start..self.position];
+    }
+};
 
-//     // Read the file into the buffer
-//     const bytes_read = try file.readAll(buffer);
+const parse_version_retval = struct { version: util.Version, game: *const [7]u8, save: f32, log: u32 };
 
-//     const slice = buffer[0..4]; // Convert to a slice
+fn parse_version(headerReader: *ByteReader, dataReader: *ByteReader) !parse_version_retval {
+    const slice = dataReader.read_bytes(4);
+    const log: u32 = std.mem.readInt(u32, slice[0..4], .little);
 
-//     // Read a u32 from the buffer (assuming little-endian format)
-//     const header_len = std.mem.readInt(u32, slice, .little);
-//     std.debug.print("Read u32 value: {}\n", .{header_len});
+    const gameSlice = headerReader.read_bytes(7);
 
-//     // read compressed header.
-//     const compressed_header = buffer[8..header_len];
+    _ = headerReader.read_bytes(1);
 
-//     std.debug.print("Byte: 0x{x}\n", .{compressed_header[0]});
-//     std.debug.print("Byte: 0x{x}\n", .{compressed_header[compressed_header.len - 1]});
-//     std.debug.print("Size {}\n", .{compressed_header.len - 1});
+    const saveSlice = headerReader.read_bytes(4);
+    var save: f32 = std.mem.bytesToValue(f32, saveSlice);
 
-//     // allocate another identical buffer with 2 extra bytes, set to 0
-//     // const file_contents_plus_two = try allocator.alloc(u8, compressed_header.len + 2);
-//     // defer allocator.free(file_contents_plus_two);
-//     // @memcpy(file_contents_plus_two[0..compressed_header.len], compressed_header);
-//     // file_contents_plus_two[compressed_header.len] = 0;
-//     // file_contents_plus_two[compressed_header.len + 1] = 0;
+    if (save == -1) {
+        const s = headerReader.read_bytes(4);
+        const sInt: u32 = std.mem.readInt(u32, s[0..4], .little);
 
-//     // var reader: std.Io.Reader = .fixed(compressed_header);
-//     var decompressBuffer: [1000]u8 = undefined;
-//     //const
+        if (sInt == 37) {
+            save = 37.0;
+        } else {
+            save = @as(f32, @floatFromInt(sInt)) / @as(f32, @floatFromInt((1 << 16)));
+        }
+    }
 
-//     var stream = std.io.fixedBufferStream(&compressed_header);
-//     var decompress: std.compress.flate.Decompress = .init(stream.reader(), .raw, &decompressBuffer);
+    const version = try util.getVersion(gameSlice[0..7], save, log);
 
-//     const b = try decompress.reader.takeByte();
-//     std.debug.print("length: {}\n", .{b});
+    return .{ .version = version, .game = gameSlice[0..7], .save = save, .log = log };
+}
 
-//     // should decompress to 4160 bytes
-//     var out_buffer: [4160]u8 = undefined;
-//     var out_writer: std.Io.Writer = .fixed(&out_buffer);
+pub fn bufferedPrint() !void {
+    // Get the allocator
+    const allocator = std.heap.page_allocator;
 
-//     const written = try decompress.reader.streamRemaining(&out_writer);
-//     std.debug.print("decompressed {} bytes\n", .{written});
+    // Open the file
+    const file = try std.fs.cwd().openFile("archers.aoe2record", .{});
+    defer file.close();
 
-//     // Read the decompressed data into a buffer
-//     var output_buffer = std.ArrayList(u8).init(allocator);
-//     defer output_buffer.deinit();
-//     //var out_writer: std.Io.Writer = .fixed(output_buffer);
+    // Get file size
+    const file_size = try file.getEndPos();
 
-//     //const written = try decompress.reader.streamRemaining(&out_writer);
+    // Allocate buffer to hold file contents
+    const buffer_full = try allocator.alloc(u8, std.math.cast(usize, file_size) orelse return error.FileTooLarge);
+    defer allocator.free(buffer_full);
 
-//     //std.debug.print("{}", .{written});
+    // Read the file into the buffer
+    _ = try file.readAll(buffer_full);
 
-//     // Verify we read the entire file
-//     if (bytes_read != file_size) {
-//         std.debug.print("Error: Could not read entire file\n", .{});
-//         return error.IncompleteRead;
-//     }
+    var bufferReader = ByteReader.init(buffer_full);
 
-//     // The string to write
-//     //const content = ".{}";
+    const slice = bufferReader.read_bytes(8);
 
-//     // Open or create a file
-//     const outFile = try std.fs.cwd().createFile("output.txt", .{});
-//     defer outFile.close();
+    // Read a u32 from the buffer (assuming little-endian format)
+    const header_len = std.mem.readInt(u64, slice[0..8], .little);
 
-//     // After
-//     const formatted = try std.fmt.allocPrint(allocator, "{}", .{file_size});
-//     defer allocator.free(formatted);
-//     // Write the string to the file
-//     try outFile.writeAll(formatted);
-// }
+    // read compressed header.
+    const compressed_header = bufferReader.read_bytes(header_len - 8); //buffer[8..header_len];
+
+    var in2 = std.io.fixedBufferStream(compressed_header);
+
+    var out2 = std.ArrayList(u8).init(allocator);
+    defer out2.deinit();
+
+    try std.compress.flate.decompress(in2.reader(), out2.writer());
+    var headerReader = ByteReader.init(out2.items);
+    const res = try parse_version(&headerReader, &bufferReader);
+    std.debug.print("version from parse_version is {}\n", .{res.version});
+    std.debug.print("game from parse_version is {s}\n", .{res.game});
+    std.debug.print("save from parse_version is {}\n", .{res.save});
+    std.debug.print("log from parse_version is {}\n", .{res.log});
+}
 
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
