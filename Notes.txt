@@ -14,3 +14,6 @@ seemed very painful.
 2. Unused variables is painful.
 3. getting ultra-specific types on ints is painful.
 4. String operations like .strip() don't exist...
+5. The ethos of zig is that you use this language to write valuable software. Not throwaway scripts, not junk, but optimal, readable, maintainable software. It helps to remember this when you are forced to delete unused variables and specify not just int, but u32 (unsigned 32 bit int).
+6. comptime was awesome, I literally guessed the syntax and got it right on the first try. 
+7. It's really cool that you can go to definition on std methods and read the basic source code. 

@@ -24,7 +24,15 @@ pub const ByteReader = struct {
     }
 
     pub fn read_int(self: *ByteReader, comptime T: type) T {
-        return std.mem.readInt(T, self.read_bytes(@sizeOf(T))[0..@sizeOf(T)], .little);
+        return self.read_int_endian(T, .little); //std.mem.readInt(T, self.read_bytes(@sizeOf(T))[0..@sizeOf(T)], .little);
+    }
+
+    pub fn read_int_endian(self: *ByteReader, comptime T: type, endian: std.builtin.Endian) T {
+        return std.mem.readInt(T, self.read_bytes(@sizeOf(T))[0..@sizeOf(T)], endian);
+    }
+
+    pub fn read_to_value(self: *ByteReader, comptime T: type) T {
+        return std.mem.bytesToValue(T, self.read_bytes(@sizeOf(T)));
     }
 
     pub fn read_bytes(self: *ByteReader, count: u64) []const u8 {

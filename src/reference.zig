@@ -1,6 +1,11 @@
 const std = @import("std");
 const util = @import("util.zig");
 
+pub const DatasetResult = struct {
+    dataset_id: u32,
+    json: std.json.Value,
+};
+
 fn contains(slice: []const u32, value: u32) bool {
     for (slice) |item| {
         if (item == value) return true;
@@ -8,7 +13,7 @@ fn contains(slice: []const u32, value: u32) bool {
     return false;
 }
 
-pub fn get_dataset(allocator: std.mem.Allocator, version: util.Version, mod: []u32) struct { dataset_id: u32, json: std.json.Value } {
+pub fn get_dataset(allocator: std.mem.Allocator, version: util.Version, mod: []u32) DatasetResult {
     var dataset_id: ?u32 = null;
     if (version == util.Version.DE) {
         if (contains(mod, 11)) {

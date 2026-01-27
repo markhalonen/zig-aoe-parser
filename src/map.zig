@@ -87,6 +87,12 @@ pub fn extract_from_instructions(instructions: []const u8) struct {
 }
 
 pub const get_map_data_type = struct {
+    map_data: map_data_type,
+    encoding: []const u8,
+    language: []const u8,
+};
+
+pub const map_data_type = struct {
     id: ?u32,
     name: []const u8,
     size: ?[]const u8,
@@ -124,17 +130,21 @@ pub fn get_map_data(
     const water_percent = get_water_percent(tiles, dataset_id);
 
     return .{
-        .id = if (!custom) map_id else null,
-        .name = header.strip(allocator, name, ' '),
-        .size = aoe_consts.MAP_SIZES.get(dimension),
-        .dimension = dimension,
-        .seed = if (de_seed) |s| s else seed,
-        .mod_id = null,
-        .modes = modes,
-        .custom = custom,
-        .zr = std.mem.eql(u8, name[0..3], "ZR@"),
-        .tiles = tiles2,
-        .water = water_percent,
+        .map_data = .{
+            .id = if (!custom) map_id else null,
+            .name = header.strip(allocator, name, ' '),
+            .size = aoe_consts.MAP_SIZES.get(dimension),
+            .dimension = dimension,
+            .seed = if (de_seed) |s| s else seed,
+            .mod_id = null,
+            .modes = modes,
+            .custom = custom,
+            .zr = std.mem.eql(u8, name[0..3], "ZR@"),
+            .tiles = tiles2,
+            .water = water_percent,
+        },
+        .encoding = ef.encoding,
+        .language = ef.language,
     };
 }
 

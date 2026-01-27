@@ -389,7 +389,7 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
     var guidHash = std.crypto.hash.Sha1.init(.{});
     guidHash.update(guid);
     const res: parse_de_type = .{
-        .players = &[_]player_type{},
+        .players = players,
         .guid = uuid.urn.serialize(guidInt),
         .hash = guidHash,
         .lobby = lobby,
@@ -559,15 +559,46 @@ pub fn parse_map(allocator: std.mem.Allocator, headerReader: *util.ByteReader, v
     return retval;
 }
 pub const player_info_type = struct {
-    number: usize,
-    type_: i8,
+    number: i32,
+    type_: u32,
     name: []const u8,
     diplomacy: []i32,
-    civilization_id: i8,
-    color_id: i8,
+    civilization_id: u32,
+    color_id: i32,
     objects: []object,
     position: struct { x: f32, y: f32 },
+    team_id: ?i32,
+    profile_id: ?u32,
+    custom_civ_selection: ?[]u32,
+    prefer_random: ?bool,
+    ai_name: ?[]const u8,
+
+    pub fn update(self: *player_info_type, de_player: player_type) void {
+        // handle all of these fields.
+        //         number: i32,
+        // color_id: i32,
+        // team_id: i32,
+        // ai_name: []const u8,
+        // name: []const u8,
+        // type: u32,
+        // profile_id: u32,
+        // civilization_id: u32,
+        // custom_civ_selection: ?[]u32,
+        // prefer_random: bool
+
+        self.number = de_player.number;
+        self.color_id = de_player.color_id;
+        self.team_id = de_player.team_id;
+        self.ai_name = de_player.ai_name;
+        self.name = de_player.name;
+        self.type_ = de_player.type;
+        self.profile_id = de_player.profile_id;
+        self.civilization_id = de_player.civilization_id;
+        self.custom_civ_selection = de_player.custom_civ_selection;
+        self.prefer_random = de_player.prefer_random;
+    }
 };
+
 const parse_player_result = struct {
     player_info: player_info_type,
     device: ?u8,
@@ -673,14 +704,19 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
 
         const res: parse_player_result = .{
             .player_info = .{
-                .number = player_number,
-                .type_ = type_,
+                .number = @as(i32, @intCast(player_number)),
+                .type_ = @as(u32, @intCast(type_)),
                 .name = name,
                 .diplomacy = diplomacy,
-                .civilization_id = civilization_id,
+                .civilization_id = @as(u32, @intCast(civilization_id)),
                 .color_id = color_id,
                 .objects = r1.objects.items,
                 .position = .{ .x = start_x, .y = start_y },
+                .team_id = null,
+                .profile_id = null,
+                .prefer_random = null,
+                .custom_civ_selection = null,
+                .ai_name = null,
             },
             .device = device,
         };
