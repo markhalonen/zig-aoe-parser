@@ -139,8 +139,7 @@ pub fn parse_action_71094(
     if (action_type == enums.ActionEnum.de_queue) {
         const selected = reader.read_int(i16);
         _ = reader.read_bytes(4);
-        const building_type = reader.read_int(i16);
-        _ = building_type;
+        _ = reader.read_int(i16); // building_type - not used in output
         const unit_id = reader.read_int(i16);
         const amount = reader.read_int(i16);
         for (0..@as(usize, @intCast(selected))) |_| {
@@ -190,9 +189,10 @@ pub fn parse_action_71094(
 
     if (action_type == enums.ActionEnum.build) {
         const selected = reader.read_int(i16);
+        _ = reader.read_bytes(2); // padding
         const x = reader.read_to_value(f32);
         const y = reader.read_to_value(f32);
-        const building_id = reader.read_int(u32);
+        const building_id = reader.read_int(i32);
         _ = reader.read_bytes(8);
         const unk2 = reader.read_int(i16);
         _ = unk2;
@@ -203,7 +203,7 @@ pub fn parse_action_71094(
         for (0..@as(usize, @intCast(selected))) |_| {
             object_ids.append(reader.read_int(u32)) catch @panic("build_failed");
         }
-        payload.building_id = building_id;
+        payload.building_id = @as(u32, @intCast(building_id));
         payload.object_ids = object_ids.items;
         payload.x = x;
         payload.y = y;

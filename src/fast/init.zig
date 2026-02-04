@@ -250,6 +250,7 @@ fn action(allocator: std.mem.Allocator, reader: *util.ByteReader, sequenceInput:
         // Parse action here...
         payload = parse_action(allocator, action_type, action_bytes);
     }
+    payload.sequence = sequence;
     return payload;
 }
 
