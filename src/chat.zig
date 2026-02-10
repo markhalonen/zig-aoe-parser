@@ -182,7 +182,6 @@ pub fn parse_chat(
     }
     // TODO left off a bunch here...
 
-    std.debug.print("{s}", .{lineOut});
     return retval;
 }
 

@@ -255,13 +255,13 @@ pub fn initMaps() !void {
     try MAP_NAMES.put(125, "Ravines");
 
     // Initialize MAP_SIZES
-    try MAP_SIZES.put(120, "tiny");
-    try MAP_SIZES.put(144, "small");
-    try MAP_SIZES.put(168, "medium");
-    try MAP_SIZES.put(200, "normal");
-    try MAP_SIZES.put(220, "large");
-    try MAP_SIZES.put(240, "giant");
-    try MAP_SIZES.put(255, "maximum");
+    try MAP_SIZES.put(120, "Tiny");
+    try MAP_SIZES.put(144, "Small");
+    try MAP_SIZES.put(168, "Medium");
+    try MAP_SIZES.put(200, "Normal");
+    try MAP_SIZES.put(220, "Large");
+    try MAP_SIZES.put(240, "Giant");
+    try MAP_SIZES.put(255, "Maximum");
 
     try WATER_TERRAIN.put(0, &[_]i8{ 1, 4, 15, 22, 23 });
     try WATER_TERRAIN.put(1, &[_]i8{ 1, 4, 11, 15, 22, 23 });

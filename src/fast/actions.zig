@@ -2,6 +2,10 @@ const enums = @import("./enums.zig");
 const util = @import("../util.zig");
 const std = @import("std");
 
+// Track last object_ids per action type for waypoint commands (selected=-1)
+var last_move_object_ids: ?[]u32 = null;
+var last_order_object_ids: ?[]u32 = null;
+
 pub const action_result = struct {
     bytes: ?[]const u8,
     sequence: ?u32,
@@ -157,12 +161,24 @@ pub fn parse_action_71094(
         const y = reader.read_to_value(f32);
         const selected = reader.read_int(i16);
         object_ids.clearRetainingCapacity();
-        _ = reader.read_bytes(4);
 
-        if (selected > 0) {
-            for (0..@as(usize, @intCast(selected))) |_| {
-                object_ids.append(reader.read_int(u32)) catch @panic("123asd12asd");
+        // Check if this is a waypoint move (selected=-1 means "use previous selection")
+        if (selected == -1) {
+            // Waypoint move - use object_ids from previous move action
+            if (last_move_object_ids) |prev_ids| {
+                for (prev_ids) |id| {
+                    object_ids.append(id) catch @panic("waypoint_move_failed");
+                }
             }
+        } else {
+            _ = reader.read_bytes(4);
+            if (selected > 0) {
+                for (0..@as(usize, @intCast(selected))) |_| {
+                    object_ids.append(reader.read_int(u32)) catch @panic("123asd12asd");
+                }
+            }
+            // Save for future waypoint moves
+            last_move_object_ids = object_ids.items;
         }
 
         payload.object_ids = object_ids.items;
@@ -175,11 +191,23 @@ pub fn parse_action_71094(
         const x = reader.read_to_value(f32);
         const y = reader.read_to_value(f32);
         const selected = reader.read_int(i16);
-        _ = reader.read_bytes(4);
-        if (selected > 0) {
-            for (0..@as(usize, @intCast(selected))) |_| {
-                object_ids.append(reader.read_int(u32)) catch @panic("order_failed");
+
+        // Check if this is a waypoint order (selected=-1 means "use previous selection")
+        if (selected == -1) {
+            if (last_order_object_ids) |prev_ids| {
+                for (prev_ids) |id| {
+                    object_ids.append(id) catch @panic("waypoint_order_failed");
+                }
             }
+        } else {
+            _ = reader.read_bytes(4);
+            if (selected > 0) {
+                for (0..@as(usize, @intCast(selected))) |_| {
+                    object_ids.append(reader.read_int(u32)) catch @panic("order_failed");
+                }
+            }
+            // Save for future waypoint ORDER actions (per-type cache)
+            last_order_object_ids = object_ids.items;
         }
         payload.object_ids = object_ids.items;
         payload.target_id = @as(i32, @intCast(target_id));

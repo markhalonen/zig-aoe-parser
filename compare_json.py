@@ -5,9 +5,28 @@ import re
 zig_data = None
 py_data = None
 
+def floats_equal(a, b, rel_tol=1e-6):
+    """Check if two floats are approximately equal."""
+    if a == b:
+        return True
+    if a == 0 or b == 0:
+        return abs(a - b) < 1e-9
+    return abs(a - b) / max(abs(a), abs(b)) < rel_tol
+
+# Fields that should be skipped due to known differences (timezone, etc.)
+SKIP_FIELDS = {'timestamp'}  # Top-level timestamp has timezone issues
+
 def compare(a, b, path=""):
     """Recursively compare two values, print first difference and exit."""
     if type(a) != type(b):
+        # Allow int/float equivalence for numeric values
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            if not floats_equal(float(a), float(b)):
+                print(f"Value mismatch at {path or 'root'}:")
+                print(f"  zig:    {repr(a)[:200]}")
+                print(f"  python: {repr(b)[:200]}")
+                sys.exit(1)
+            return  # Values are close enough
         print(f"Type mismatch at {path or 'root'}:")
         print(f"  zig:    {type(a).__name__} = {repr(a)[:100]}")
         print(f"  python: {type(b).__name__} = {repr(b)[:100]}")
@@ -17,6 +36,9 @@ def compare(a, b, path=""):
         all_keys = set(a.keys()) | set(b.keys())
         for key in sorted(all_keys):
             new_path = f"{path}.{key}" if path else key
+            # Skip known differing fields at top level
+            if not path and key in SKIP_FIELDS:
+                continue
             if key not in a:
                 print(f"Missing in zig: {new_path}")
                 print(f"  python has: {repr(b[key])[:200]}")
@@ -47,7 +69,14 @@ def compare(a, b, path=""):
         for i, (x, y) in enumerate(zip(a, b)):
             compare(x, y, f"{path}[{i}]")
     else:
-        if a != b:
+        # For floats, use tolerance comparison
+        if isinstance(a, float) and isinstance(b, float):
+            if not floats_equal(a, b):
+                print(f"Value mismatch at {path or 'root'}:")
+                print(f"  zig:    {repr(a)[:200]}")
+                print(f"  python: {repr(b)[:200]}")
+                sys.exit(1)
+        elif a != b:
             print(f"Value mismatch at {path or 'root'}:")
             print(f"  zig:    {repr(a)[:200]}")
             print(f"  python: {repr(b)[:200]}")

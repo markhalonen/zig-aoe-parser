@@ -28,11 +28,16 @@ fn serializeMatch(match: Match, writer: anytype, seen_players: *std.AutoHashMap(
     try writer.writeAll("\"players\":");
     try serializePlayerSlice(match.players, writer, seen_players);
 
-    // teams
+    // teams - output as arrays of player numbers
     try writer.writeAll(",\"teams\":[");
     for (match.teams, 0..) |team, i| {
         if (i > 0) try writer.writeAll(",");
-        try serializePlayerSlice(team, writer, seen_players);
+        try writer.writeAll("[");
+        for (team, 0..) |p, j| {
+            if (j > 0) try writer.writeAll(",");
+            try writer.print("{}", .{p.number});
+        }
+        try writer.writeAll("]");
     }
     try writer.writeAll("]");
 
@@ -50,7 +55,8 @@ fn serializeMatch(match: Match, writer: anytype, seen_players: *std.AutoHashMap(
 
     // simple fields
     try writer.print(",\"restored\":{}", .{match.restored});
-    try writer.print(",\"restored_at_ms\":{}", .{match.restored_at_ms});
+    try writer.writeAll(",\"restored_at\":");
+    try formatTimestamp(match.restored_at_ms, writer);
     try serializeOptionalString(",\"speed\":", match.speed, writer);
     try writer.print(",\"speed_id\":{}", .{match.speed_id});
     try writer.print(",\"cheats\":{}", .{match.cheats});
@@ -73,8 +79,8 @@ fn serializeMatch(match: Match, writer: anytype, seen_players: *std.AutoHashMap(
     try writer.writeAll(",\"dataset\":\"");
     try writeJsonEscaped(match.dataset, writer);
     try writer.writeAll("\"");
-    try serializeOptionalString(",\"game_type\":", match.game_type, writer);
-    try writer.print(",\"game_type_id\":{}", .{match.game_type_id});
+    try serializeOptionalString(",\"type\":", match.game_type, writer);
+    try writer.print(",\"type_id\":{}", .{match.game_type_id});
     try serializeOptionalString(",\"map_reveal\":", match.map_reveal, writer);
     try writer.print(",\"map_reveal_id\":{}", .{match.map_reveal_id});
     try serializeOptionalString(",\"difficulty\":", match.difficulty, writer);
@@ -85,7 +91,8 @@ fn serializeMatch(match: Match, writer: anytype, seen_players: *std.AutoHashMap(
     try serializeOptionalBool(",\"lock_speed\":", match.lock_speed, writer);
     try serializeOptionalBool(",\"all_technologies\":", match.all_technologies, writer);
     try serializeOptionalBool(",\"multiqueue\":", match.multiqueue, writer);
-    try writer.print(",\"duration_ms\":{}", .{match.duration_ms});
+    try writer.writeAll(",\"duration\":");
+    try formatTimestamp(match.duration_ms, writer);
     try writer.writeAll(",\"diplomacy_type\":\"");
     try writeJsonEscaped(match.diplomacy_type, writer);
     try writer.writeAll("\"");
@@ -101,12 +108,23 @@ fn serializeMatch(match: Match, writer: anytype, seen_players: *std.AutoHashMap(
     try writeFloat(match.save_version, writer);
     try writer.print(",\"log_version\":{}", .{match.log_version});
     if (match.build_version) |v| try writer.print(",\"build_version\":{}", .{v});
-    if (match.timestamp) |ts| try writer.print(",\"timestamp\":{}", .{ts});
-    if (match.spec_delay_seconds) |d| try writer.print(",\"spec_delay_seconds\":{}", .{d});
+    if (match.timestamp) |ts| {
+        try writer.writeAll(",\"timestamp\":\"");
+        try formatUnixTimestamp(ts, writer);
+        try writer.writeAll("\"");
+    }
+    if (match.spec_delay_seconds) |d| {
+        try writer.writeAll(",\"spec_delay\":");
+        try formatTimestamp(d * 1000, writer); // Convert seconds to ms for timestamp format
+    }
     try serializeOptionalBool(",\"allow_specs\":", match.allow_specs, writer);
     try serializeOptionalBool(",\"hidden_civs\":", match.hidden_civs, writer);
     try serializeOptionalBool(",\"private\":", match.private, writer);
-    try serializeOptionalString(",\"hash\":", match.hash, writer);
+    if (match.hash) |h| {
+        try writer.writeAll(",\"hash\":\"");
+        try writer.writeAll(&h);
+        try writer.writeAll("\"");
+    }
 
     // actions
     try writer.writeAll(",\"actions\":");
@@ -229,11 +247,11 @@ fn serializeMap(map: Map, writer: anytype) !void {
     try writer.print(",\"seed\":{}", .{map.seed});
     if (map.mod_id) |id| try writer.print(",\"mod_id\":{}", .{id});
     try writer.print(",\"zr\":{}", .{map.zr});
-    try serializeOptionalString(",\"modes\":", map.modes, writer);
+    try writer.print(",\"modes\":{{\"direct_placement\":{},\"effect_quantity\":{},\"guard_state\":{},\"fixed_positions\":{}}}", .{ map.modes.direct_placement, map.modes.effect_quantity, map.modes.guard_state, map.modes.fixed_positions });
     try writer.writeAll(",\"tiles\":[");
     for (map.tiles, 0..) |tile, i| {
         if (i > 0) try writer.writeAll(",");
-        try writer.print("{{\"terrain_id\":{},\"elevation\":{},\"position\":{{\"x\":", .{ tile.terrain_id, tile.elevation });
+        try writer.print("{{\"terrain\":{},\"elevation\":{},\"position\":{{\"x\":", .{ tile.terrain_id, tile.elevation });
         try writeFloat(tile.position.x, writer);
         try writer.writeAll(",\"y\":");
         try writeFloat(tile.position.y, writer);
@@ -242,7 +260,7 @@ fn serializeMap(map: Map, writer: anytype) !void {
     try writer.writeAll("]}");
 }
 
-fn serializeFile(file: File, writer: anytype, seen_players: *std.AutoHashMap(*const Player, void)) !void {
+fn serializeFile(file: File, writer: anytype, _: *std.AutoHashMap(*const Player, void)) !void {
     try writer.writeAll("{");
     try writer.writeAll("\"encoding\":\"");
     try writeJsonEscaped(file.encoding, writer);
@@ -253,18 +271,17 @@ fn serializeFile(file: File, writer: anytype, seen_players: *std.AutoHashMap(*co
     try writer.writeAll("\"");
     try writer.print(",\"size\":{}", .{file.size});
     if (file.device_type) |dt| try writer.print(",\"device_type\":{}", .{dt});
-    try writer.writeAll(",\"perspective\":");
-    try serializePlayer(&file.perspective, writer, seen_players);
+    try writer.print(",\"perspective\":{}", .{file.perspective.number});
     try writer.writeAll(",\"viewlocks\":[");
     for (file.viewlocks, 0..) |vl, i| {
         if (i > 0) try writer.writeAll(",");
-        try writer.print("{{\"timestampMs\":{},\"position\":{{\"x\":", .{vl.timestampMs});
+        try writer.writeAll("{\"timestamp\":");
+        try formatTimestamp(vl.timestampMs, writer);
+        try writer.writeAll(",\"position\":{\"x\":");
         try writeFloat(vl.position.x, writer);
         try writer.writeAll(",\"y\":");
         try writeFloat(vl.position.y, writer);
-        try writer.writeAll("},\"player\":");
-        try serializePlayer(&vl.player, writer, seen_players);
-        try writer.writeAll("}");
+        try writer.print("}},\"player\":{}}}", .{vl.player.number});
     }
     try writer.writeAll("]}");
 }
@@ -483,6 +500,18 @@ fn serializePayload(payload: actions.action_result, writer: anytype) !void {
         first = false;
         try writer.print("\"y_end\":{}", .{v});
     }
+    if (payload.x) |v| {
+        if (!first) try writer.writeAll(",");
+        first = false;
+        try writer.writeAll("\"x\":");
+        try writeFloat(v, writer);
+    }
+    if (payload.y) |v| {
+        if (!first) try writer.writeAll(",");
+        first = false;
+        try writer.writeAll("\"y\":");
+        try writeFloat(v, writer);
+    }
 
     // Object IDs array
     if (payload.object_ids) |ids| {
@@ -517,7 +546,50 @@ fn formatTimestamp(ms: u32, writer: anytype) !void {
     const minutes = (total_seconds % 3600) / 60;
     const seconds = total_seconds % 60;
     const micros = (ms % 1000) * 1000;
-    try writer.print("\"{}:{d:0>2}:{d:0>2}.{d:0>6}\"", .{ hours, minutes, seconds, micros });
+    if (micros == 0) {
+        try writer.print("\"{}:{d:0>2}:{d:0>2}\"", .{ hours, minutes, seconds });
+    } else {
+        try writer.print("\"{}:{d:0>2}:{d:0>2}.{d:0>6}\"", .{ hours, minutes, seconds, micros });
+    }
+}
+
+fn formatUnixTimestamp(ts: i64, writer: anytype) !void {
+    // Convert Unix timestamp to YYYY-MM-DD HH:MM:SS format
+    const epoch_seconds: i64 = ts;
+    const SECONDS_PER_DAY: i64 = 86400;
+    const SECONDS_PER_HOUR: i64 = 3600;
+    const SECONDS_PER_MINUTE: i64 = 60;
+
+    // Days since Unix epoch (1970-01-01)
+    var days = @divFloor(epoch_seconds, SECONDS_PER_DAY);
+    var remaining = @mod(epoch_seconds, SECONDS_PER_DAY);
+
+    const hours: u32 = @intCast(@divFloor(remaining, SECONDS_PER_HOUR));
+    remaining = @mod(remaining, SECONDS_PER_HOUR);
+    const minutes: u32 = @intCast(@divFloor(remaining, SECONDS_PER_MINUTE));
+    const seconds: u32 = @intCast(@mod(remaining, SECONDS_PER_MINUTE));
+
+    // Calculate year, month, day from days since epoch
+    var year: i32 = 1970;
+    while (true) {
+        const days_in_year: i64 = if (@mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0)) 366 else 365;
+        if (days < days_in_year) break;
+        days -= days_in_year;
+        year += 1;
+    }
+
+    const is_leap = @mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0);
+    const days_in_month = [_]i64{ 31, if (is_leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+    var month: u32 = 1;
+    for (days_in_month) |dim| {
+        if (days < dim) break;
+        days -= dim;
+        month += 1;
+    }
+    const day: u32 = @intCast(days + 1);
+
+    try writer.print("{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{ year, month, day, hours, minutes, seconds });
 }
 
 fn serializeActionSlice(act: []Action, writer: anytype, _: *std.AutoHashMap(*const Player, void)) !void {
@@ -549,13 +621,13 @@ fn serializeActionSlice(act: []Action, writer: anytype, _: *std.AutoHashMap(*con
     try writer.writeAll("]");
 }
 
-fn serializeInputSlice(inputs: []Input, writer: anytype, seen_players: *std.AutoHashMap(*const Player, void)) !void {
+fn serializeInputSlice(inputs: []Input, writer: anytype, _: *std.AutoHashMap(*const Player, void)) !void {
     try writer.writeAll("[");
     for (inputs, 0..) |inp, i| {
         if (i > 0) try writer.writeAll(",");
-        try writer.writeAll("{");
-        try writer.print("\"timestamp\":{}", .{inp.timestamp});
-        try writer.writeAll(",\"input_type\":\"");
+        try writer.writeAll("{\"timestamp\":");
+        try formatTimestamp(inp.timestamp, writer);
+        try writer.writeAll(",\"type\":\"");
         try writeJsonEscaped(inp.input_type, writer);
         try writer.writeAll("\"");
         if (inp.param) |param| {
@@ -563,11 +635,10 @@ fn serializeInputSlice(inputs: []Input, writer: anytype, seen_players: *std.Auto
             try writeJsonEscaped(param, writer);
             try writer.writeAll("\"");
         }
-        // payload serialization depends on action_result type - simplified here
-        try writer.writeAll(",\"payload\":{}");
-        if (inp.player) |*p| {
-            try writer.writeAll(",\"player\":");
-            try serializePlayer(p, writer, seen_players);
+        try writer.writeAll(",\"payload\":");
+        try serializePayload(inp.payload, writer);
+        if (inp.player) |p| {
+            try writer.print(",\"player\":{}", .{p.number});
         }
         if (inp.position) |pos| {
             try writer.writeAll(",\"position\":{\"x\":");
@@ -598,11 +669,11 @@ fn serializeOptionalBool(prefix: []const u8, value: ?bool, writer: anytype) !voi
 }
 
 fn writeFloat(value: f32, writer: anytype) !void {
-    // Ensure floats always have a decimal point for JSON compatibility
+    // Match Python's output format
     const rounded = @round(value);
     if (value == rounded and @abs(value) < 1e9) {
-        // It's a whole number - add .0
-        try writer.print("{d}.0", .{@as(i64, @intFromFloat(value))});
+        // It's a whole number - output as integer
+        try writer.print("{d}", .{@as(i64, @intFromFloat(value))});
     } else {
         // Use f64 for full precision output matching Python
         try writer.print("{d}", .{@as(f64, value)});
@@ -692,6 +763,13 @@ pub const Tile = struct {
     position: Position,
 };
 
+pub const MapModes = struct {
+    direct_placement: bool,
+    effect_quantity: bool,
+    guard_state: bool,
+    fixed_positions: bool,
+};
+
 pub const Map = struct {
     id: u32,
     name: []const u8,
@@ -701,7 +779,7 @@ pub const Map = struct {
     seed: i32,
     mod_id: ?u32,
     zr: bool,
-    modes: ?[]const u8,
+    modes: MapModes,
     tiles: []Tile,
 };
 
@@ -759,7 +837,7 @@ pub const Match = struct {
     allow_specs: ?bool,
     hidden_civs: ?bool,
     private: ?bool,
-    hash: ?[]const u8,
+    hash: ?[40]u8,
     actions: []Action,
     inputs: []Input,
 };

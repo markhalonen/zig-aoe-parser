@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(zig build:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(findstr:*)",
+      "Bash(.zig-outbinbasic.exe)",
+      "Bash(./zig-out/bin/basic.exe:*)",
+      "Bash(zig-out/bin/zig14_basic.exe)"
     ]
   }
 }
