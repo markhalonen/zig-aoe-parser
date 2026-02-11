@@ -55,7 +55,7 @@ pub fn parse_action_71094(
     player_id: i8,
     data: []const u8,
 ) action_result {
-    var reader = util.ByteReader.init(data);
+    var reader = util.ByteReader.initSafe(data);
     var payload: action_result = .{
         .bytes = null,
         .sequence = null,
@@ -146,6 +146,7 @@ pub fn parse_action_71094(
         _ = reader.read_int(i16); // building_type - not used in output
         const unit_id = reader.read_int(i16);
         const amount = reader.read_int(i16);
+        _ = reader.read_bytes(4); // trailing padding
         for (0..@as(usize, @intCast(selected))) |_| {
             object_ids.append(reader.read_int(u32)) catch @panic("13qdsq2eqsd");
         }
@@ -171,7 +172,7 @@ pub fn parse_action_71094(
                 }
             }
         } else {
-            _ = reader.read_bytes(4);
+            _ = reader.read_bytes(6);
             if (selected > 0) {
                 for (0..@as(usize, @intCast(selected))) |_| {
                     object_ids.append(reader.read_int(u32)) catch @panic("123asd12asd");
@@ -200,7 +201,7 @@ pub fn parse_action_71094(
                 }
             }
         } else {
-            _ = reader.read_bytes(4);
+            _ = reader.read_bytes(6);
             if (selected > 0) {
                 for (0..@as(usize, @intCast(selected))) |_| {
                     object_ids.append(reader.read_int(u32)) catch @panic("order_failed");
@@ -210,7 +211,7 @@ pub fn parse_action_71094(
             last_order_object_ids = object_ids.items;
         }
         payload.object_ids = object_ids.items;
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = @bitCast(target_id);
         payload.x = x;
         payload.y = y;
     }
@@ -244,10 +245,11 @@ pub fn parse_action_71094(
         const y = reader.read_to_value(f32);
         const target_id = reader.read_int(i32);
         const target_type = reader.read_int(i32);
+        _ = reader.read_bytes(1); // padding
         for (0..@as(usize, @intCast(selected))) |_| {
             object_ids.append(reader.read_int(u32)) catch @panic("gather_point_failed");
         }
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = target_id;
         payload.target_type = target_type;
         payload.x = x;
         payload.y = y;
@@ -255,10 +257,10 @@ pub fn parse_action_71094(
     }
 
     if (action_type == enums.ActionEnum.de_multi_gatherpoint) {
-        const target_id = reader.read_int(u32);
+        const target_id = reader.read_int(i32);
         const x = reader.read_to_value(f32);
         const y = reader.read_to_value(f32);
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = target_id;
         payload.x = x;
         payload.y = y;
     }
@@ -288,7 +290,7 @@ pub fn parse_action_71094(
         }
         payload.order_id = order_id;
         payload.slot_id = slot_id;
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = target_id;
         payload.x = x;
         payload.y = y;
         payload.object_ids = object_ids.items;
@@ -310,7 +312,7 @@ pub fn parse_action_71094(
         const object_id = reader.read_int(u32);
         object_ids.append(object_id) catch @panic("buy_sell_failed");
         payload.resource_id = resource_id;
-        payload.amount = amount;
+        payload.amount = amount * 100;
         payload.object_ids = object_ids.items;
     }
 
@@ -388,7 +390,7 @@ pub fn parse_action_71094(
         payload.object_ids = object_ids.items;
         payload.x = x;
         payload.y = y;
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = target_id;
     }
 
     if (action_type == enums.ActionEnum.flare) {
@@ -428,7 +430,7 @@ pub fn parse_action_71094(
             object_ids.append(reader.read_int(u32)) catch @panic("follow_guard_failed");
         }
         payload.object_ids = object_ids.items;
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = @bitCast(target_id);
     }
 
     if (action_type == enums.ActionEnum.attack_ground) {
@@ -452,7 +454,7 @@ pub fn parse_action_71094(
             object_ids.append(reader.read_int(u32)) catch @panic("repair_failed");
         }
         payload.object_ids = object_ids.items;
-        payload.target_id = @as(i32, @intCast(target_id));
+        payload.target_id = @bitCast(target_id);
     }
 
     if (action_type == enums.ActionEnum.de_tribute) {
@@ -490,6 +492,40 @@ pub fn parse_action_71094(
         const unit_id = reader.read_int(i16);
         payload.building_id = @as(u32, @intCast(building_id));
         payload.unit_id = unit_id;
+    }
+
+    // Match Python: if any read overflowed, return ERROR action (like struct.error)
+    if (reader.overflowed) {
+        payload.action_type = enums.ActionEnum.@"error";
+        payload.player_id = null;
+        payload.object_ids = null;
+        payload.command_id = null;
+        payload.target_player_id = null;
+        payload.diplomacy_mode = null;
+        payload.speed = null;
+        payload.number = null;
+        payload.amount = null;
+        payload.unit_id = null;
+        payload.x = null;
+        payload.y = null;
+        payload.building_id = null;
+        payload.target_id = null;
+        payload.target_type = null;
+        payload.stance_id = null;
+        payload.order_id = null;
+        payload.slot_id = null;
+        payload.formation_id = null;
+        payload.resource_id = null;
+        payload.x_end = null;
+        payload.y_end = null;
+        payload.targets = null;
+        payload.mode = null;
+        payload.wood = null;
+        payload.food = null;
+        payload.gold = null;
+        payload.stone = null;
+        payload.technology_id = null;
+        return payload;
     }
 
     payload.player_id = player_id;

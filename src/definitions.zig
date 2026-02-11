@@ -2,6 +2,7 @@ const std = @import("std");
 const enums = @import("fast/enums.zig");
 const actions = @import("fast/actions.zig");
 const util = @import("util.zig");
+const chatModule = @import("chat.zig");
 
 pub const Position = struct { x: f32, y: f32 };
 
@@ -134,6 +135,18 @@ fn serializeMatch(match: Match, writer: anytype, seen_players: *std.AutoHashMap(
     try writer.writeAll(",\"inputs\":");
     try serializeInputSlice(match.inputs, writer, seen_players);
 
+    // uptimes
+    try writer.writeAll(",\"uptimes\":[");
+    for (match.uptimes, 0..) |uptime, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writer.writeAll("{\"timestamp\":");
+        try formatTimestamp(uptime.timestamp_ms, writer);
+        try writer.writeAll(",\"age\":\"");
+        try writer.writeAll(@tagName(uptime.age));
+        try writer.print("\",\"player\":{}}}", .{uptime.player_number});
+    }
+    try writer.writeAll("]");
+
     try writer.writeAll("}");
 }
 
@@ -204,6 +217,18 @@ fn serializePlayer(player: *const Player, writer: anytype, seen_players: *std.Au
     if (player.winner) |w| try writer.print(",\"winner\":{}", .{w});
     if (player.eapm) |e| try writer.print(",\"eapm\":{}", .{e});
     if (player.rate_snapshot) |r| try writer.print(",\"rate_snapshot\":{}", .{r});
+
+    if (player.timeseries.len > 0) {
+        try writer.writeAll(",\"timeseries\":[");
+        for (player.timeseries, 0..) |row, i| {
+            if (i > 0) try writer.writeAll(",");
+            try writer.writeAll("{\"timestamp\":");
+            try formatTimestamp(row.timestamp_ms, writer);
+            try writer.print(",\"total_resources\":{},\"total_objects\":{}", .{ row.total_resources, row.total_objects });
+            try writer.writeAll("}");
+        }
+        try writer.writeAll("]");
+    }
 
     try writer.writeAll("}");
 }
@@ -286,12 +311,13 @@ fn serializeFile(file: File, writer: anytype, _: *std.AutoHashMap(*const Player,
     try writer.writeAll("]}");
 }
 
-fn serializeChatSlice(chats: []Chat, writer: anytype, seen_players: *std.AutoHashMap(*const Player, void)) !void {
+fn serializeChatSlice(chats: []Chat, writer: anytype, _: *std.AutoHashMap(*const Player, void)) !void {
     try writer.writeAll("[");
     for (chats, 0..) |chat, i| {
         if (i > 0) try writer.writeAll(",");
         try writer.writeAll("{");
-        try writer.print("\"timestampMs\":{}", .{chat.timestampMs});
+        try writer.writeAll("\"timestamp\":");
+        try formatTimestamp(chat.timestampMs, writer);
         try writer.writeAll(",\"message\":\"");
         try writeJsonEscaped(chat.message, writer);
         try writer.writeAll("\"");
@@ -301,8 +327,7 @@ fn serializeChatSlice(chats: []Chat, writer: anytype, seen_players: *std.AutoHas
         try writer.writeAll(",\"audience\":\"");
         try writeJsonEscaped(chat.audience, writer);
         try writer.writeAll("\"");
-        try writer.writeAll(",\"player\":");
-        try serializePlayer(&chat.player, writer, seen_players);
+        try writer.print(",\"player\":{}", .{chat.player.number});
         try writer.writeAll("}");
     }
     try writer.writeAll("]");
@@ -627,16 +652,24 @@ fn serializeInputSlice(inputs: []Input, writer: anytype, _: *std.AutoHashMap(*co
         if (i > 0) try writer.writeAll(",");
         try writer.writeAll("{\"timestamp\":");
         try formatTimestamp(inp.timestamp, writer);
-        try writer.writeAll(",\"type\":\"");
-        try writeJsonEscaped(inp.input_type, writer);
-        try writer.writeAll("\"");
+        if (inp.input_type) |input_type| {
+            try writer.writeAll(",\"type\":\"");
+            try writeJsonEscaped(input_type, writer);
+            try writer.writeAll("\"");
+        }
         if (inp.param) |param| {
             try writer.writeAll(",\"param\":\"");
             try writeJsonEscaped(param, writer);
             try writer.writeAll("\"");
         }
-        try writer.writeAll(",\"payload\":");
-        try serializePayload(inp.payload, writer);
+        if (inp.chat_message) |msg| {
+            try writer.writeAll(",\"payload\":{\"message\":\"");
+            try writeJsonEscaped(msg, writer);
+            try writer.writeAll("\"}");
+        } else if (inp.payload) |payload| {
+            try writer.writeAll(",\"payload\":");
+            try serializePayload(payload, writer);
+        }
         if (inp.player) |p| {
             try writer.print(",\"player\":{}", .{p.number});
         }
@@ -708,6 +741,18 @@ pub const Object = struct {
     position: Position,
 };
 
+pub const TimeseriesRow = struct {
+    timestamp_ms: u32,
+    total_resources: u32,
+    total_objects: u32,
+};
+
+pub const Uptime = struct {
+    timestamp_ms: u32,
+    age: chatModule.Age,
+    player_number: usize,
+};
+
 pub const Player = struct {
     number: usize,
     name: []const u8,
@@ -724,6 +769,7 @@ pub const Player = struct {
     winner: ?bool,
     eapm: ?u32,
     rate_snapshot: ?u32,
+    timeseries: []TimeseriesRow,
 };
 
 pub const Viewlock = struct {
@@ -750,9 +796,10 @@ pub const Action = struct {
 
 pub const Input = struct {
     timestamp: u32,
-    input_type: []const u8,
+    input_type: ?[]const u8,
     param: ?[]const u8,
-    payload: actions.action_result,
+    payload: ?actions.action_result = null,
+    chat_message: ?[]const u8 = null,
     player: ?Player,
     position: ?Position,
 };
@@ -840,4 +887,5 @@ pub const Match = struct {
     hash: ?[40]u8,
     actions: []Action,
     inputs: []Input,
+    uptimes: []Uptime,
 };

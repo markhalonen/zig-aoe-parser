@@ -6,7 +6,14 @@
       "Bash(findstr:*)",
       "Bash(.zig-outbinbasic.exe)",
       "Bash(./zig-out/bin/basic.exe:*)",
-      "Bash(zig-out/bin/zig14_basic.exe)"
+      "Bash(zig-out/bin/zig14_basic.exe)",
+      "Bash(dir:*)",
+      "Bash(cmd /c \"dir /b aoc-mgz\\\\tests\\\\recs\")",
+      "Bash(echo:*)",
+      "Bash(cd:*)",
+      "Bash(copy:*)",
+      "Bash(cmd /c \"cd c:\\\\Users\\\\halon\\\\zig14-basic\\\\aoc-mgz && python test1.py\")",
+      "Bash(powershell -Command:*)"
     ]
   }
 }

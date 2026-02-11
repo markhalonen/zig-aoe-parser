@@ -9,11 +9,21 @@ pub const SeekFrom = enum {
 pub const ByteReader = struct {
     buffer: []const u8,
     position: usize,
+    safe_mode: bool = false,
+    overflowed: bool = false,
 
     pub fn init(buffer: []const u8) ByteReader {
         return ByteReader{
             .buffer = buffer,
             .position = 0,
+        };
+    }
+
+    pub fn initSafe(buffer: []const u8) ByteReader {
+        return ByteReader{
+            .buffer = buffer,
+            .position = 0,
+            .safe_mode = true,
         };
     }
 
@@ -28,15 +38,28 @@ pub const ByteReader = struct {
     }
 
     pub fn read_int_endian(self: *ByteReader, comptime T: type, endian: std.builtin.Endian) T {
-        return std.mem.readInt(T, self.read_bytes(@sizeOf(T))[0..@sizeOf(T)], endian);
+        const bytes = self.read_bytes(@sizeOf(T));
+        if (self.overflowed) return 0;
+        return std.mem.readInt(T, bytes[0..@sizeOf(T)], endian);
     }
 
     pub fn read_to_value(self: *ByteReader, comptime T: type) T {
-        return std.mem.bytesToValue(T, self.read_bytes(@sizeOf(T)));
+        const bytes = self.read_bytes(@sizeOf(T));
+        if (self.overflowed) return std.mem.zeroes(T);
+        return std.mem.bytesToValue(T, bytes);
+    }
+
+    pub fn remaining(self: *ByteReader) u64 {
+        return self.buffer.len - self.position;
     }
 
     pub fn read_bytes(self: *ByteReader, count: u64) []const u8 {
         if (self.position + count > self.buffer.len) {
+            if (self.safe_mode) {
+                self.overflowed = true;
+                self.position = self.buffer.len;
+                return self.buffer[self.buffer.len..self.buffer.len];
+            }
             std.debug.print("tried to read past buffer length. Buffer length is {}, tried to read {}", .{ self.buffer.len, self.position + count });
             std.debug.panic("aasd", .{});
             std.process.exit(1);
@@ -150,11 +173,10 @@ pub fn getVersion(game_version: *const [7]u8, save_version: f32, log_version: ?u
 
 pub fn de_string(reader: *ByteReader) []const u8 {
     // Check for the magic bytes '\x60\x0a'
-    const header = reader.read_bytes(2);
-    if (!std.mem.eql(u8, header, &[_]u8{ 0x60, 0x0a })) {
-        std.debug.panic("here", .{});
-        std.debug.print("did not find expected de string header", .{});
-        std.process.exit(1);
+    const hdr = reader.read_bytes(2);
+    if (!std.mem.eql(u8, hdr, &[_]u8{ 0x60, 0x0a })) {
+        std.debug.print("de_string: expected 0x60 0x0a but got {x} {x} at position {d}\n", .{ hdr[0], hdr[1], reader.position - 2 });
+        std.debug.panic("de_string header mismatch", .{});
     }
 
     // Read 2 bytes for length (little-endian short)
@@ -167,6 +189,22 @@ pub fn de_string(reader: *ByteReader) []const u8 {
     const length_u64: u64 = @intCast(length);
     // Read the string data based on length
     return reader.read_bytes(length_u64);
+}
+
+pub fn hd_string(reader: *ByteReader) []const u8 {
+    // HD string format: length (u16), then magic bytes '\x60\x0a', then string data
+    // This is different from DE string which has magic bytes first
+    const length_bytes = reader.read_bytes(2);
+    const length = std.mem.readInt(u16, length_bytes[0..2], .little);
+
+    // Check for the magic bytes '\x60\x0a'
+    const hdr = reader.read_bytes(2);
+    if (!std.mem.eql(u8, hdr, &[_]u8{ 0x60, 0x0a })) {
+        std.debug.panic("did not find expected hd string header", .{});
+    }
+
+    // Read the string data based on length
+    return reader.read_bytes(length);
 }
 
 pub fn string_block(reader: *ByteReader, allocator: std.mem.Allocator) std.ArrayList([][]const u8) {

@@ -28,11 +28,7 @@ pub fn main() !void {
 
     const m = try parseMatch(allocator);
 
-    // Print performance metrics
-    header.print_perf_times();
-
     // Serialize match to JSON and write to file
-
     const json = try definitions.serialize(m, allocator);
 
     const file = try std.fs.cwd().createFile("output.json", .{});
@@ -150,7 +146,7 @@ fn enrichAction(action: *definitions.Action, dataset: reference.DatasetResult, c
 pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
 
     // Open the file
-    const file = try std.fs.cwd().openFile("archers.aoe2record", .{});
+    const file = try std.fs.cwd().openFile("game3.aoe2record", .{});
     defer file.close();
 
     // Get file size
@@ -308,7 +304,7 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
             .winner = null,
             .eapm = null,
             .rate_snapshot = null,
-            // left off on objects
+            .timeseries = &.{},
         };
 
         playersMap.put(player.number, p) catch @panic("Asdasd2123");
@@ -393,9 +389,12 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
     var timestamp: u32 = 0;
     var resigned = std.ArrayList(u32).init(allocator);
     var actions = std.ArrayList(definitions.Action).init(allocator);
+    // Per-player timeseries data collected from sync ops
+    var timeseries_map = std.AutoHashMap(i32, std.ArrayList(definitions.TimeseriesRow)).init(allocator);
     var last_viewlock: ?enums.viewlock_result = null;
     var viewlocks = std.ArrayList(definitions.Viewlock).init(allocator);
     var chats = std.ArrayList(definitions.Chat).init(allocator);
+    var uptimes = std.ArrayList(definitions.Uptime).init(allocator);
     var eapm = std.AutoHashMap(i32, u32).init(allocator);
     var postgame: ?enums.postgame_result = null;
 
@@ -407,6 +406,24 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
         switch (op) {
             .sync => |r| {
                 timestamp += r.increment;
+                if (r.payload.values) |values| {
+                    if (r.payload.current_time) |current_time| {
+                        var vit = values.iterator();
+                        while (vit.next()) |entry| {
+                            const player_number = @as(i32, @intCast(entry.key_ptr.*));
+                            const stats = entry.value_ptr.*;
+                            const gop = timeseries_map.getOrPut(player_number) catch @panic("timeseries_map_put");
+                            if (!gop.found_existing) {
+                                gop.value_ptr.* = std.ArrayList(definitions.TimeseriesRow).init(allocator);
+                            }
+                            gop.value_ptr.append(.{
+                                .timestamp_ms = current_time,
+                                .total_resources = stats.total_res,
+                                .total_objects = stats.obj_count,
+                            }) catch @panic("timeseries_append");
+                        }
+                    }
+                }
             },
             .viewlock => |r| {
                 if (last_viewlock) |lv| {
@@ -426,13 +443,28 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
                 const chat = chatModule.parse_chat(allocator, r, md.encoding, timestamp, pd.items, diplomacy_type, "game");
 
                 if (chat.type == chatModule.Chat.Message) {
-                    chats.append(.{
+                    const chatEntry: definitions.Chat = .{
                         .timestampMs = chat.timestamp + data.map.restore_time,
                         .message = chat.message.?,
                         .origination = chat.origination.?,
                         .audience = chat.audience.?,
                         .player = playersMap.get(chat.player_number.?).?,
-                    }) catch @panic("123asd");
+                    };
+                    chats.append(chatEntry) catch @panic("123asd");
+                    inputsVariable.addChat(chatEntry) catch @panic("add_chat_failed");
+                }
+                if (chat.type == chatModule.Chat.Age) {
+                    if (chat.age) |age| {
+                        if (chat.player_number) |pn| {
+                            if (playersMap.get(pn)) |player| {
+                                uptimes.append(.{
+                                    .timestamp_ms = chat.timestamp + data.map.restore_time,
+                                    .age = age,
+                                    .player_number = player.number,
+                                }) catch @panic("uptimes_append");
+                            }
+                        }
+                    }
                 }
             },
             .action => |r| {
@@ -552,6 +584,16 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
         var p = playersMap.get(player_id).?;
         p.eapm = eapm_value;
         playersMap.put(player_id, p) catch @panic("eapm_update_failed");
+    }
+
+    // Assign timeseries to players
+    var ts_iter = timeseries_map.iterator();
+    while (ts_iter.next()) |entry| {
+        const player_number = entry.key_ptr.*;
+        const ts_list = entry.value_ptr.*;
+        var p = playersMap.get(player_number).?;
+        p.timeseries = ts_list.items;
+        playersMap.put(player_number, p) catch @panic("timeseries_update_failed");
     }
 
     // Build tiles array
@@ -700,6 +742,7 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
         .hash = match_hash,
         .actions = actions.items,
         .inputs = inputsVariable.inputs.items,
+        .uptimes = uptimes.items,
     };
 }
 

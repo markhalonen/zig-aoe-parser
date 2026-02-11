@@ -57,7 +57,7 @@ pub const Inputs = struct {
             .timestamp = chat.timestampMs,
             .input_type = "Chat",
             .param = null,
-            .payload = undefined, // Would need to create an empty payload
+            .chat_message = chat.message,
             .player = chat.player,
             .position = null,
         };
@@ -70,7 +70,7 @@ pub const Inputs = struct {
             return null;
         }
 
-        var name: []const u8 = undefined;
+        var name: ?[]const u8 = undefined;
         var param: ?[]const u8 = null;
         var payload = action.payload;
 
@@ -92,15 +92,13 @@ pub const Inputs = struct {
             payload.object_ids = cached_oids;
         }
 
-        // Handle special cases
+        // Handle special cases - match Python where name can become None
         if (action.action == enums.ActionEnum.special) {
-            if (payload.order) |order| {
-                name = order;
-            }
+            name = payload.order;
         } else if (action.action == enums.ActionEnum.game) {
+            name = payload.command;
             if (payload.command) |command| {
-                name = command;
-                if (std.mem.eql(u8, name, "Speed")) {
+                if (std.mem.eql(u8, command, "Speed")) {
                     if (payload.speed) |speed| {
                         var buf: [32]u8 = undefined;
                         param = try std.fmt.bufPrint(&buf, "{d}", .{speed});
@@ -144,9 +142,7 @@ pub const Inputs = struct {
                 }
             }
         } else if (action.action == enums.ActionEnum.buy or action.action == enums.ActionEnum.sell) {
-            if (payload.amount) |amt| {
-                payload.amount = amt * 100;
-            }
+            // amount already multiplied by 100 in parser
         } else if (action.action == enums.ActionEnum.build) {
             param = payload.building;
             if (action.position) |pos| {

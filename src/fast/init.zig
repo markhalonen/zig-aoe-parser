@@ -91,7 +91,6 @@ fn reverseSliceAlloc(comptime T: type, allocator: std.mem.Allocator, slice: []co
 }
 
 fn postgame(allocator: std.mem.Allocator, reader: *util.ByteReader) enums.postgame_result {
-    std.debug.print("postgame is {}\n", .{reader.get_position()});
     const bytes = reader.read();
     var data = util.ByteReader.init(reverseSliceAlloc(u8, allocator, bytes) catch @panic("123123"));
     _ = data.read_bytes(8);
@@ -162,7 +161,6 @@ pub fn meta(reader: *util.ByteReader) void {
 }
 
 fn save(reader: *util.ByteReader) void {
-    std.debug.print("at save and pos is {}\n\n", .{reader.get_position()});
     reader.seek(-4, .Current);
     const pos = reader.get_position();
     const length = reader.read_int(u32);
@@ -172,14 +170,102 @@ fn save(reader: *util.ByteReader) void {
 }
 
 fn parse_action(allocator: std.mem.Allocator, action_type: enums.ActionEnum, data: []const u8) actions.action_result {
+    // Need at least 3 bytes for player_id (1) + length (2)
+    if (data.len < 3) {
+        // Very short action - return basic result
+        return .{
+            .bytes = data,
+            .sequence = null,
+            .player_id = if (data.len >= 1) @as(i8, @bitCast(data[0])) else null,
+            .object_ids = null,
+            .command_id = null,
+            .target_player_id = null,
+            .diplomacy_mode = null,
+            .speed = null,
+            .number = null,
+            .amount = null,
+            .unit_id = null,
+            .x = null,
+            .y = null,
+            .building_id = null,
+            .target_id = null,
+            .target_type = null,
+            .stance_id = null,
+            .order_id = null,
+            .slot_id = null,
+            .formation_id = null,
+            .resource_id = null,
+            .x_end = null,
+            .y_end = null,
+            .targets = null,
+            .mode = null,
+            .wood = null,
+            .food = null,
+            .gold = null,
+            .stone = null,
+            .technology_id = null,
+            .action_type = action_type,
+            .technology = null,
+            .formation = null,
+            .stance = null,
+            .building = null,
+            .unit = null,
+            .command = null,
+            .order = null,
+            .resource = null,
+        };
+    }
+
     var reader = util.ByteReader.init(data);
     const player_id = reader.read_int(i8);
     const length = reader.read_int(i16);
 
     if (data.len == length + 3) {
+        // DE format
         return actions.parse_action_71094(allocator, action_type, player_id, data[3..]);
     }
-    @panic("only de supported");
+    // Non-DE format - return basic action result without detailed parsing
+    return .{
+        .bytes = data,
+        .sequence = null,
+        .player_id = player_id,
+        .object_ids = null,
+        .command_id = null,
+        .target_player_id = null,
+        .diplomacy_mode = null,
+        .speed = null,
+        .number = null,
+        .amount = null,
+        .unit_id = null,
+        .x = null,
+        .y = null,
+        .building_id = null,
+        .target_id = null,
+        .target_type = null,
+        .stance_id = null,
+        .order_id = null,
+        .slot_id = null,
+        .formation_id = null,
+        .resource_id = null,
+        .x_end = null,
+        .y_end = null,
+        .targets = null,
+        .mode = null,
+        .wood = null,
+        .food = null,
+        .gold = null,
+        .stone = null,
+        .technology_id = null,
+        .action_type = action_type,
+        .technology = null,
+        .formation = null,
+        .stance = null,
+        .building = null,
+        .unit = null,
+        .command = null,
+        .order = null,
+        .resource = null,
+    };
 }
 
 fn concatSlices(allocator: std.mem.Allocator, slice1: []const u8, slice2: []const u8) ![]u8 {
@@ -249,6 +335,10 @@ fn action(allocator: std.mem.Allocator, reader: *util.ByteReader, sequenceInput:
     } else {
         // Parse action here...
         payload = parse_action(allocator, action_type, action_bytes);
+        // Match Python: if parse returned error, return ERROR action without sequence
+        if (payload.action_type == enums.ActionEnum.@"error") {
+            return payload;
+        }
     }
     payload.sequence = sequence;
     return payload;

@@ -23,6 +23,75 @@ const AGE_MARKERS = [_][]const u8{
     "ha raggiunto",
     "avanzó a Ed",
     "đã nâng cấp",
+    "progressé vers",
+    "wkracza do",
+    "युग में उन्नत है।",
+    "telah mara ke",
+    "çağına ulaştı",
+};
+
+const FEUDAL_AGE_MARKERS = [_][]const u8{
+    "봉건 시대",
+    "Edad Feudal",
+    "封建时代",
+    "Feudalzeit",
+    "Feodal Çağ",
+    "封建時代",
+    "領主の時代",
+    "Zaman Feudal",
+    "Età feudale",
+    "Feudal Age",
+    "Thời phong kiến",
+    "सामंतवादी युग",
+    "Era Feudalna",
+    "Idade Feudal",
+    "Âge féodal",
+    "Феодальная эпоха",
+};
+
+const CASTLE_AGE_MARKERS = [_][]const u8{
+    "성주 시대",
+    "Ed. Castillos",
+    "城堡时代",
+    "Ritterzeit",
+    "Kale Çağı",
+    "城堡時代",
+    "Edad de los Castillos",
+    "城主の時代",
+    "Zaman Kastil",
+    "Età dei castelli",
+    "Castle Age",
+    "Thời lâu đài",
+    "परिवर्तन युग",
+    "Era Zamków",
+    "Idade dos Castelos",
+    "Âge des châteaux",
+    "Замковая эпоха",
+};
+
+const IMPERIAL_AGE_MARKERS = [_][]const u8{
+    "왕정 시대",
+    "Edad Imperial",
+    "帝王时代",
+    "Imperialzeit",
+    "İmparatorluk Çağı",
+    "帝王時代",
+    "帝王の時代",
+    "Zaman Empayar",
+    "Età imperiale",
+    "Imperial Age",
+    "Thời đế quốc",
+    "साम्राज्यवादी युग",
+    "Era Imperiów",
+    "Idade Imperial",
+    "Âge impérial",
+    "Имперская эпоха",
+};
+
+pub const Age = enum(u8) {
+    FEUDAL_AGE = 2,
+    CASTLE_AGE = 3,
+    IMPERIAL_AGE = 4,
 };
 
 const SAVE_MARKERS = [_][]const u8{
@@ -49,7 +118,7 @@ pub const Chat = enum(u8) {
     Discard = 8,
 };
 
-const parse_chat_type = struct {
+pub const parse_chat_type = struct {
     timestamp: u32,
     origination: ?[]const u8,
     type: ?Chat,
@@ -57,6 +126,7 @@ const parse_chat_type = struct {
     player_number: ?i32,
     message: ?[]const u8,
     audience: ?[]const u8,
+    age: ?Age = null,
 };
 
 pub const PlayerMinimal = struct { name: []const u8, number: i32 };
@@ -158,13 +228,6 @@ pub fn parse_chat(
         }
     }
 
-    for (AGE_MARKERS) |am| {
-        if (std.mem.indexOf(u8, lineOut, am)) |_| {
-            retval.type = Chat.Age;
-            return retval;
-        }
-    }
-
     if ((std.mem.indexOf(u8, lineOut, "Voobly: Ratings provided") orelse 0) > 0) {
         parse_ladder(&retval, lineOut);
     } else if ((std.mem.indexOf(u8, lineOut, "Voobly") orelse 0) == 3) {
@@ -180,7 +243,33 @@ pub fn parse_chat(
     } else {
         _parse_chat(allocator, &retval, lineOut, players, diplomacyType);
     }
-    // TODO left off a bunch here...
+
+    // Check for age advancement messages (after main parsing, like Python)
+    if (retval.type != Chat.Discard) {
+        for (AGE_MARKERS) |am| {
+            if (std.mem.indexOf(u8, lineOut, am)) |_| {
+                for (FEUDAL_AGE_MARKERS) |fm| {
+                    if (std.mem.indexOf(u8, lineOut, fm)) |_| {
+                        retval.age = Age.FEUDAL_AGE;
+                    }
+                }
+                for (CASTLE_AGE_MARKERS) |cm| {
+                    if (std.mem.indexOf(u8, lineOut, cm)) |_| {
+                        retval.age = Age.CASTLE_AGE;
+                    }
+                }
+                for (IMPERIAL_AGE_MARKERS) |im| {
+                    if (std.mem.indexOf(u8, lineOut, im)) |_| {
+                        retval.age = Age.IMPERIAL_AGE;
+                    }
+                }
+                if (retval.age != null) {
+                    retval.type = Chat.Age;
+                }
+                break;
+            }
+        }
+    }
 
     return retval;
 }

@@ -54,7 +54,7 @@ pub const Operation = union(OperationTag) {
 
 pub const ActionEnum = enum(i16) {
     /// Action types.
-    // error = -1,
+    @"error" = -1,
     order = 0,
     stop = 1,
     work = 2,

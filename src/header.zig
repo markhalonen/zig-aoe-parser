@@ -27,6 +27,9 @@ pub fn parse_version(headerReader: *util.ByteReader, dataReader: *util.ByteReade
         }
     }
 
+    // Round to 2 decimal places (matching Python's behavior)
+    save = @round(save * 100.0) / 100.0;
+
     const version = try util.getVersion(gameSlice[0..7], save, log);
 
     return .{ .version = version, .game = gameSlice[0..7], .save = save, .log = log };
@@ -112,13 +115,13 @@ pub const parse_de_type = struct {
 pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, version: util.Version, save: f32, skip: bool) parse_de_type {
     _ = version;
     var build: ?u32 = null;
-    if (save > 25.22) {
+    if (save >= 25.22) {
         const s = headerReader.read_bytes(4);
         build = std.mem.readInt(u32, s[0..4], .little);
     }
 
     var timestamp: ?u32 = null;
-    if (save > 26.16) {
+    if (save >= 26.16) {
         timestamp = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
     }
     _ = headerReader.read_bytes(12);
@@ -133,7 +136,7 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
     _ = headerReader.read_bytes(4);
 
     var difficulty_id: ?u32 = null;
-    if (save > 61.5) {
+    if (save >= 61.5) {
         const map_dimension = headerReader.read_bytes(4);
         _ = map_dimension;
     } else {
@@ -158,7 +161,7 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
     const num_players = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
     _ = headerReader.read_bytes(14);
 
-    if (save > 61.5) {
+    if (save >= 61.5) {
         difficulty_id = std.mem.readInt(u8, headerReader.read_bytes(1)[0..1], .little);
     }
 
@@ -179,9 +182,15 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
     const shared_exploration = std.mem.readInt(i8, headerReader.read_bytes(1)[0..1], .little);
     const team_positions = std.mem.readInt(i8, headerReader.read_bytes(1)[0..1], .little);
 
-    _ = headerReader.read_bytes(12);
+    // sub_game_mode (4) + battle_royale_time (4) only if save >= 13.34
+    // separator (4) always
+    if (save >= 13.34) {
+        _ = headerReader.read_bytes(12); // sub_game_mode + battle_royale_time + separator
+    } else {
+        _ = headerReader.read_bytes(4); // just separator
+    }
 
-    if (save > 25.06) {
+    if (save >= 25.06) {
         _ = headerReader.read_bytes(1);
     }
 
@@ -189,11 +198,15 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
         _ = headerReader.read_bytes(1);
     }
 
-    const players = allocator.alloc(player_type, num_players) catch {
+    // For save < 37, player data is stored for 8 players (fixed)
+    // For save >= 37 and < 66.3, player data is stored for num_players players
+    // For save >= 66.3, player data is stored for 8 players again
+    const player_count = if (save >= 37 and save < 66.3) num_players else 8;
+    const players = allocator.alloc(player_type, player_count) catch {
         std.process.exit(1);
     };
 
-    for (0..(if (save > 37) num_players else 8)) |player_idx| {
+    for (0..player_count) |player_idx| {
         _ = headerReader.read_bytes(4);
 
         const color_id = std.mem.readInt(i32, headerReader.read_bytes(4)[0..4], .little);
@@ -203,9 +216,9 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
         const civilization_id = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
 
         var custom_civ_selection_optional: ?[]u32 = null;
-        if (save > 61.5) {
+        if (save >= 61.5) {
             const custom_civ_count = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
-            if (save > 63 and custom_civ_count > 0) {
+            if (save >= 63 and custom_civ_count > 0) {
                 custom_civ_selection_optional = allocator.alloc(u32, custom_civ_count) catch {
                     std.process.exit(1);
                 };
@@ -216,10 +229,13 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
                 }
             }
         }
-        _ = util.de_string(headerReader);
+        _ = util.de_string(headerReader); // ai_type
 
-        _ = headerReader.read_bytes(1);
+        _ = headerReader.read_bytes(1); // ai_civ_name_index
         const ai_name = util.de_string(headerReader);
+        if (save >= 66.3) {
+            _ = util.de_string(headerReader); // censored_name
+        }
         const name = util.de_string(headerReader);
         const typeVal = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
         const profile_id = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
@@ -257,7 +273,8 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
     }
     _ = headerReader.read_bytes(12);
 
-    if (save >= 37) {
+    // empty_slots only exists for 37 <= save < 66.3
+    if (save >= 37 and save < 66.3) {
         for (0..8 - num_players) |_| {
             if (save >= 61.5) {
                 _ = headerReader.read_bytes(4);
@@ -319,7 +336,7 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
         _ = headerReader.read_bytes(4);
     }
 
-    if (save > 25.02) {
+    if (save >= 25.02) {
         _ = headerReader.read_bytes(8);
     }
 
@@ -327,13 +344,20 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
 
     const lobby = util.de_string(headerReader);
 
-    if (save > 25.22) {
+    if (save >= 25.22) {
         _ = headerReader.read_bytes(8);
     }
 
     const mod = util.de_string(headerReader);
 
-    _ = headerReader.read_bytes(33);
+    // Version-dependent bytes (Python: Bytes(19) + conditional blocks)
+    _ = headerReader.read_bytes(19);
+    if (save >= 13.13) {
+        _ = headerReader.read_bytes(5);
+    }
+    if (save >= 13.17) {
+        _ = headerReader.read_bytes(9);
+    }
 
     if (save >= 20.06) {
         _ = headerReader.read_bytes(1);
@@ -362,12 +386,28 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
     if (save >= 63) {
         _ = headerReader.read_bytes(5);
     }
+    if (save >= 66.3) {
+        const unknown_count = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
+        _ = headerReader.read_bytes(12);
+        _ = headerReader.read_bytes(unknown_count * 4);
+    }
 
     var x: ?u32 = null;
 
     if (!skip) {
         _ = util.de_string(headerReader);
-        _ = headerReader.read_bytes(8);
+        _ = headerReader.read_bytes(5);
+        if (save >= 13.13) {
+            _ = headerReader.read_bytes(1);
+        }
+        if (save < 13.17) {
+            _ = util.de_string(headerReader);
+            _ = headerReader.read_bytes(4); // Int32ul
+            _ = headerReader.read_bytes(4); // Bytes(4)
+        }
+        if (save >= 13.17) {
+            _ = headerReader.read_bytes(2);
+        }
         if (save >= 37) {
             timestamp = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
             x = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
@@ -428,6 +468,176 @@ pub fn parse_de(allocator: std.mem.Allocator, headerReader: *util.ByteReader, ve
         .allocator = allocator,
     };
     return res;
+}
+
+pub const parse_hd_type = struct {
+    save_version: f32,
+    num_players: u32,
+    allocator: std.mem.Allocator,
+};
+
+pub fn parse_hd(allocator: std.mem.Allocator, headerReader: *util.ByteReader, version: util.Version, save: f32) parse_hd_type {
+    _ = version;
+
+    // HD version stored as float (e.g., 1000.0 for hd-4.6, 1005.0 for hd-5.1, 1006.0 for hd-5.7)
+    // Convert to integer for reliable comparison
+    const hd_version_f = std.mem.bytesToValue(f32, headerReader.read_bytes(4));
+    const hd_version: u32 = @intFromFloat(@round(hd_version_f));
+    _ = headerReader.read_bytes(4); // interval_version
+    _ = headerReader.read_bytes(4); // game_options_version
+
+    const dlc_count = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
+    _ = headerReader.read_bytes(dlc_count * 4); // dlc_ids
+
+    _ = headerReader.read_bytes(4); // dataset_ref
+    _ = headerReader.read_bytes(4); // difficulty_id
+    _ = headerReader.read_bytes(4); // selected_map_id
+    _ = headerReader.read_bytes(4); // resolved_map_id
+    _ = headerReader.read_bytes(4); // reveal_map
+    _ = headerReader.read_bytes(4); // victory_type_id
+    _ = headerReader.read_bytes(4); // starting_resources_id
+    _ = headerReader.read_bytes(4); // starting_age_id
+    _ = headerReader.read_bytes(4); // ending_age_id
+
+    if (hd_version >= 1006) {
+        _ = headerReader.read_bytes(4); // game_type
+    }
+
+    _ = headerReader.read_bytes(4); // separator
+
+    if (hd_version == 1000) {
+        // ver1000 has map_name and unk strings
+        _ = util.hd_string(headerReader);
+        _ = util.hd_string(headerReader);
+    }
+
+    _ = headerReader.read_bytes(4); // separator
+    _ = headerReader.read_bytes(4); // speed
+    _ = headerReader.read_bytes(4); // treaty_length
+    _ = headerReader.read_bytes(4); // population_limit
+
+    const num_players = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
+
+    _ = headerReader.read_bytes(4); // unused_player_color
+    _ = headerReader.read_bytes(4); // victory_amount
+    _ = headerReader.read_bytes(4); // separator
+
+    // Flags
+    _ = headerReader.read_bytes(1); // trade_enabled
+    _ = headerReader.read_bytes(1); // team_bonus_disabled
+    _ = headerReader.read_bytes(1); // random_positions
+    _ = headerReader.read_bytes(1); // all_techs
+    _ = headerReader.read_bytes(1); // num_starting_units
+    _ = headerReader.read_bytes(1); // lock_teams
+    _ = headerReader.read_bytes(1); // lock_speed
+    _ = headerReader.read_bytes(1); // multiplayer
+    _ = headerReader.read_bytes(1); // cheats
+    _ = headerReader.read_bytes(1); // record_game
+    _ = headerReader.read_bytes(1); // animals_enabled
+    _ = headerReader.read_bytes(1); // predators_enabled
+    _ = headerReader.read_bytes(1); // turbo_enabled
+    _ = headerReader.read_bytes(1); // shared_exploration
+    _ = headerReader.read_bytes(1); // team_positions
+    _ = headerReader.read_bytes(1); // unk
+
+    if (hd_version == 1000) {
+        // Special handling for version 1000
+        _ = headerReader.read_bytes(40 * 3);
+        _ = headerReader.read_bytes(4); // separator
+        _ = headerReader.read_bytes(40);
+        for (0..8) |_| {
+            _ = util.hd_string(headerReader);
+        }
+        _ = headerReader.read_bytes(16);
+        _ = headerReader.read_bytes(4); // separator
+        _ = headerReader.read_bytes(10);
+    } else {
+        // test_57 check - peek ahead to determine if this is 5.7 format
+        // This affects whether we read ratings for version >= 1006
+        var is_57 = false;
+        if (hd_version >= 1006) {
+            const peek_start = headerReader.get_position();
+
+            // Peek structure: check(4) + padding(4) + [unk1_1006(1)] + padding(15) + hd_string + padding(1) + [hd_string] + hd_string + padding(16) + test(4)
+            const check = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
+            _ = headerReader.read_bytes(4); // padding
+            _ = headerReader.read_bytes(1); // unk1_1006 (version >= 1006)
+            _ = headerReader.read_bytes(15); // padding
+            _ = util.hd_string(headerReader); // first hd_string
+            _ = headerReader.read_bytes(1); // padding
+            if (hd_version >= 1005) {
+                _ = util.hd_string(headerReader); // ai_name (version >= 1005)
+            }
+            _ = util.hd_string(headerReader); // name
+            _ = headerReader.read_bytes(16); // padding
+            const test_val = std.mem.readInt(u32, headerReader.read_bytes(4)[0..4], .little);
+
+            is_57 = (check == test_val);
+
+            // Restore position after peek
+            headerReader.seek(@as(i128, @intCast(peek_start)), .Start);
+        }
+
+        // Parse 8 players
+        for (0..8) |_| {
+            _ = headerReader.read_bytes(4); // dlc_id
+            _ = headerReader.read_bytes(4); // color_id
+            if (hd_version >= 1006) {
+                _ = headerReader.read_bytes(1); // unk1_1006
+            }
+            _ = headerReader.read_bytes(2); // unk
+            _ = headerReader.read_bytes(4); // dat_crc
+            _ = headerReader.read_bytes(1); // mp_game_version
+            _ = headerReader.read_bytes(4); // team_index
+            _ = headerReader.read_bytes(4); // civ_id
+            _ = util.hd_string(headerReader); // ai_type
+            _ = headerReader.read_bytes(1); // ai_civ_name_index
+            if (hd_version >= 1005) {
+                _ = util.hd_string(headerReader); // ai_name
+            }
+            _ = util.hd_string(headerReader); // name
+            _ = headerReader.read_bytes(4); // type
+            _ = headerReader.read_bytes(8); // steam_id
+            _ = headerReader.read_bytes(4); // player_number
+
+            // Read hd_rm_rating and hd_dm_rating only if version >= 1006 AND NOT is_57
+            if (hd_version >= 1006 and !is_57) {
+                _ = headerReader.read_bytes(8); // hd_rm_rating + hd_dm_rating
+            }
+        }
+
+        _ = headerReader.read_bytes(1); // fog_of_war
+        _ = headerReader.read_bytes(1); // cheat_notifications
+        _ = headerReader.read_bytes(1); // colored_chat
+        _ = headerReader.read_bytes(9); // unknown bytes
+        _ = headerReader.read_bytes(4); // separator
+        _ = headerReader.read_bytes(1); // is_ranked
+        _ = headerReader.read_bytes(1); // allow_specs
+        _ = headerReader.read_bytes(4); // lobby_visibility
+        _ = headerReader.read_bytes(4); // custom_random_map_file_crc
+        _ = util.hd_string(headerReader); // custom_scenario_or_campaign_file
+        _ = headerReader.read_bytes(8);
+        _ = util.hd_string(headerReader); // custom_random_map_file
+        _ = headerReader.read_bytes(8);
+        _ = util.hd_string(headerReader); // custom_random_map_scenario_file
+        _ = headerReader.read_bytes(8);
+        _ = headerReader.read_bytes(16); // guid
+        _ = util.hd_string(headerReader); // lobby_name
+        _ = util.hd_string(headerReader); // modded_dataset
+        _ = headerReader.read_bytes(4); // modded_dataset_workshop_id
+
+        if (hd_version >= 1005) {
+            _ = headerReader.read_bytes(4);
+            _ = util.hd_string(headerReader);
+            _ = headerReader.read_bytes(4);
+        }
+    }
+
+    return .{
+        .save_version = save,
+        .num_players = num_players,
+        .allocator = allocator,
+    };
 }
 
 pub const parse_metadata_type = struct {
@@ -605,9 +815,6 @@ const parse_player_result = struct {
 };
 
 pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader, player_number: usize, num_players: usize, save: f32) parse_player_result {
-    parse_player_calls += 1;
-    var t_total = std.time.Timer.start() catch @panic("timer");
-
     var rep: usize = 9;
     if (save > 61.5) {
         rep = num_players;
@@ -654,7 +861,6 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
     const all_bytes = headerReader.read();
 
     // Combined needle: \x0b\x00 + any byte + \x00\x00\x00\x02\x00\x00
-    var t_needle = std.time.Timer.start() catch @panic("timer");
     const needle1: []const u8 = "\x0b\x00";
     const needle2: []const u8 = "\x00\x00\x00\x02\x00\x00";
     var startOpt: ?usize = null;
@@ -673,11 +879,8 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
             break;
         }
     }
-    parse_player_needle_search_time += t_needle.read();
 
     if (startOpt) |start| {
-        var t_obj_block = std.time.Timer.start() catch @panic("timer");
-
         // Pre-compute all BLOCK_END positions once
         var block_ends = std.ArrayList(usize).init(allocator);
         var be_search: usize = 0;
@@ -691,7 +894,6 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
         const r2 = object_block(allocator, all_bytes, r1.position, player_number, 1, block_ends.items);
 
         const r3 = object_block(allocator, all_bytes, r2.position, player_number, 2, block_ends.items);
-        parse_player_object_block_time += t_obj_block.read();
 
         var end = r3.position;
         if (std.mem.eql(u8, all_bytes[end + 8 .. end + 10], BLOCK_END)) {
@@ -707,13 +909,11 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
         var device: ?u8 = null;
 
         if (save >= 37) {
-            var t_end_regex = std.time.Timer.start() catch @panic("timer");
             offset = headerReader.get_position();
             const data = headerReader.read_bytes(100);
             device = data[8];
             const r = mvzr.compile("\xff\xff\xff\xff\xff\xff\xff\xff.\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b").?;
             const player_end_match = r.match(data);
-            parse_player_end_regex_time += t_end_regex.read();
 
             if (player_end_match) |player_end| {
                 headerReader.seek(offset + player_end.end, .Start);
@@ -749,7 +949,6 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
             },
             .device = device,
         };
-        parse_player_time += t_total.read();
         return res;
     } else {
         std.debug.panic("failed to find start", .{});
@@ -826,72 +1025,28 @@ const object_block_result = struct {
     objects: std.ArrayList(object),
 };
 
-var object_block_time: u64 = 0;
-var object_block_calls: u64 = 0;
-var object_block_iterations: u64 = 0;
-var regex_calls: u64 = 0;
-var regex_match_time: u64 = 0;
-var indexof_time: u64 = 0;
-var parse_object_time: u64 = 0;
-
-// parse_player timing
-var parse_player_time: u64 = 0;
-var parse_player_calls: u64 = 0;
-var parse_player_needle_search_time: u64 = 0;
-var parse_player_object_block_time: u64 = 0;
-var parse_player_end_regex_time: u64 = 0;
-
-pub fn print_perf_times() void {
-    std.debug.print("\n=== parse_player performance ===\n", .{});
-    std.debug.print("total time:           {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_time)) / 1_000_000.0});
-    std.debug.print("calls:                {d}\n", .{parse_player_calls});
-    std.debug.print("needle search:        {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_needle_search_time)) / 1_000_000.0});
-    std.debug.print("object_block calls:   {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_object_block_time)) / 1_000_000.0});
-    std.debug.print("end regex:            {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_end_regex_time)) / 1_000_000.0});
-
-    std.debug.print("\n=== object_block internals ===\n", .{});
-    std.debug.print("total time:           {d:>8.2} ms\n", .{@as(f64, @floatFromInt(object_block_time)) / 1_000_000.0});
-    std.debug.print("calls:                {d}\n", .{object_block_calls});
-    std.debug.print("iterations:           {d}\n", .{object_block_iterations});
-    std.debug.print("regex calls:          {d}\n", .{regex_calls});
-    std.debug.print("regex matchPos time:  {d:>8.2} ms\n", .{@as(f64, @floatFromInt(regex_match_time)) / 1_000_000.0});
-    std.debug.print("indexOf time:         {d:>8.2} ms\n", .{@as(f64, @floatFromInt(indexof_time)) / 1_000_000.0});
-    std.debug.print("parse_object time:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_object_time)) / 1_000_000.0});
-    std.debug.print("================================\n", .{});
-}
 
 pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: usize, player_number: usize, index: u8, block_ends: []const usize) object_block_result {
-    object_block_calls += 1;
-    var t_total = std.time.Timer.start() catch @panic("timer");
     var objects = std.ArrayList(object).init(allocator);
     var offsetOpt: ?usize = null;
     var pos = posInput;
     var end: ?usize = null;
-    var iteration: u32 = 0;
     var be_idx: usize = 0; // Current index into block_ends
 
     // Advance be_idx to first position >= posInput
     while (be_idx < block_ends.len and block_ends[be_idx] < posInput) : (be_idx += 1) {}
 
-    // std.debug.print("calling object_block\n", .{});
     while (true) {
-        object_block_iterations += 1;
-        iteration += 1;
         if (offsetOpt) |_| {
             // NOOP
         } else {
-            regex_calls += 1;
-            var t_regex = std.time.Timer.start() catch @panic("timer");
             const search_end = @min(pos + 10000, data.len);
             const matchOpt = findObjectMatch(data[pos..search_end], @intCast(player_number));
-            regex_match_time += t_regex.read();
 
             var matchStartOpt: ?usize = null;
             if (matchOpt) |match| {
                 matchStartOpt = match + pos;
             }
-            // std.debug.print("searching data of size {} at pos {}\n", .{ data.len, pos });
-            var t_indexof = std.time.Timer.start() catch @panic("timer");
 
             // Find first block_end >= pos using pre-computed positions
             while (be_idx < block_ends.len and block_ends[be_idx] < pos) : (be_idx += 1) {}
@@ -906,7 +1061,6 @@ pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: us
                     }
                 }
             }
-            indexof_time += t_indexof.read();
             if (matchStartOpt == null) {
                 break;
             }
@@ -919,19 +1073,15 @@ pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: us
         const test_ = data[pos .. pos + 4];
         if (!std.mem.eql(u8, test_, "\x1e\x00\x87\x02")) {
             // Parse object here.
-            var t_parse = std.time.Timer.start() catch @panic("timer");
             var ob = parse_object(data, pos);
             ob.index = index;
             objects.append(ob) catch {
                 std.debug.panic("failed to append", .{});
             };
-            parse_object_time += t_parse.read();
         }
         offsetOpt = null;
         pos += 31;
     }
-    object_block_time += t_total.read();
-    // std.debug.panic("asd", .{});
     return .{
         .position = pos + end.?,
         .objects = objects,
@@ -1049,22 +1199,69 @@ pub fn parse_scenario(allocator: std.mem.Allocator, headerReader: *util.ByteRead
     _ = allocator;
     _ = num_players;
 
-    const next_uid = headerReader.read_int(u32);
-    _ = next_uid;
-    const scenario_version = headerReader.read_int(u32);
-    _ = scenario_version;
-
-    if (save > 61.5) {
-        _ = headerReader.read_bytes(72);
+    // scenario_version (f32)
+    _ = headerReader.read_bytes(4);
+    // next_uid
+    _ = headerReader.read_bytes(4);
+    if (save >= 61.5) {
+        _ = headerReader.read_bytes(4); // player_capacity or similar
+        if (save < 66.6) {
+            _ = headerReader.read_bytes(4); // gaia_player_index only for < 66.6
+        }
     }
-    _ = headerReader.read_bytes(4447);
 
+    // tribe_names: Array of 16 strings of 256 chars
+    _ = headerReader.read_bytes(4096);
+
+    // player_names: Array of 16 Int32ul
+    _ = headerReader.read_bytes(64);
+
+    // player_data structure varies by version
+    if (save >= 66.6) {
+        // For save >= 66.6: new player_data format with de_strings
+        for (0..16) |_| {
+            _ = headerReader.read_bytes(8); // zeros + active
+            _ = util.de_string(headerReader); // string_1
+            _ = util.de_string(headerReader); // string_2
+            _ = headerReader.read_bytes(4); // unknown
+        }
+    } else {
+        // For 61.5 <= save < 66.6: extra 64 bytes
+        if (save >= 61.5) {
+            _ = headerReader.read_bytes(64);
+        }
+        // player_data: 16 players * (active + human + civilization + civ_repeat + constant)
+        // civ_repeat only for save >= 13.34
+        const player_data_size: usize = if (save >= 13.34) 20 else 16;
+        _ = headerReader.read_bytes(16 * player_data_size);
+    }
+
+    // Padding(5)
+    _ = headerReader.read_bytes(5);
+
+    // elapsed_time
+    _ = headerReader.read_bytes(4);
+
+    // scenario_filename (pascal string with u16 length)
+    const scenario_filename_len = std.mem.readInt(u16, headerReader.read_bytes(2)[0..2], .little);
     var scenario_filename: ?[]const u8 = null;
-    if (version == util.Version.DE) {
-        _ = headerReader.read_bytes(102);
-        scenario_filename = aoc_string(headerReader);
-        _ = headerReader.read_bytes(24);
+    if (scenario_filename_len > 0) {
+        scenario_filename = headerReader.read_bytes(scenario_filename_len);
     }
+
+    // DE padding
+    if (version == util.Version.DE) {
+        _ = headerReader.read_bytes(64);
+    }
+
+    // Extra padding for save >= 66.6
+    if (save >= 66.6) {
+        _ = headerReader.read_bytes(68); // Python fast parser uses 68, not 64
+    }
+
+    // messages section
+    // Pre-instruction padding (Python: data.read(20))
+    _ = headerReader.read_bytes(20);
     const instructions = aoc_string(headerReader);
 
     for (0..9) |_| {
@@ -1112,7 +1309,9 @@ pub fn parse_scenario(allocator: std.mem.Allocator, headerReader: *util.ByteRead
     var end: ?usize = null;
     if (version == util.Version.DE) {
         var settings_version: f64 = 2.2;
-        if (save >= 64.3) {
+        if (save >= 66.3) {
+            settings_version = 4.5;
+        } else if (save >= 64.3) {
             settings_version = 4.1;
         } else if (save >= 63.0) {
             settings_version = 3.9;
@@ -1234,6 +1433,9 @@ pub fn parse_lobby(
         }
         if (save >= 64.3) {
             _ = headerReader.read_bytes(16);
+        }
+        if (save >= 66.3) {
+            _ = headerReader.read_bytes(1);
         }
     }
     _ = headerReader.read_bytes(8);
