@@ -808,97 +808,81 @@ const object_block_result = struct {
 };
 
 var object_block_time: u64 = 0;
+var object_block_calls: u64 = 0;
+var regex_search_total: u64 = 0;
 var object_block_iterations: u64 = 0;
+var regex_calls: u64 = 0;
 
 pub fn print_object_block_times() void {
     std.debug.print("\n=== object_block internals ===\n", .{});
     std.debug.print("total time:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(object_block_time)) / 1_000_000.0});
+    std.debug.print("calls:    {d}\n", .{object_block_calls});
     std.debug.print("iterations:    {d}\n", .{object_block_iterations});
+    std.debug.print("regex calls:    {d}\n", .{regex_calls});
+
     std.debug.print("==============================\n", .{});
+
+    std.debug.print("regex total time:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(regex_search_total)) / 1_000_000.0});
 }
 
 pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: usize, player_number: usize, index: u8) object_block_result {
+    object_block_calls += 1;
     var t_total = std.time.Timer.start() catch @panic("timer");
-
     var objects = std.ArrayList(object).init(allocator);
-
-    // Pre-find all BLOCK_END positions in a reasonable range
-    var block_ends = std.ArrayList(usize).init(allocator);
-    const prefind_limit = @min(posInput + 200000, data.len);
-    var search_pos: usize = posInput;
-    while (search_pos < prefind_limit) {
-        if (std.mem.indexOf(u8, data[search_pos..prefind_limit], BLOCK_END)) |rel_pos| {
-            block_ends.append(search_pos + rel_pos) catch break;
-            search_pos += rel_pos + BLOCK_END.len;
-        } else {
-            break;
-        }
-    }
-
-    // Pre-find all regex matches in the same range
-    var regex_matches = std.ArrayList(usize).init(allocator);
-    var match_search_pos: usize = 0;
-    const regex_data = data[posInput..prefind_limit];
-    while (true) {
-        if (regexes[player_number].matchPos(match_search_pos, regex_data)) |m| {
-            regex_matches.append(posInput + m.start) catch break;
-            match_search_pos = m.start + 1;
-        } else {
-            break;
-        }
-    }
-
+    var offsetOpt: ?usize = null;
     var pos = posInput;
-    var block_end_idx: usize = 0;
-    var regex_idx: usize = 0;
-
-    while (regex_idx < regex_matches.items.len) {
+    var end: ?usize = null;
+    var iteration: u32 = 0;
+    // std.debug.print("calling object_block\n", .{});
+    while (true) {
         object_block_iterations += 1;
+        iteration += 1;
+        if (offsetOpt) |_| {
+            // NOOP
+        } else {
+            regex_calls += 1;
+            const matchOpt = regexes[player_number].matchPos(0, data[pos .. pos + 10000]);
 
-        const matchStart = regex_matches.items[regex_idx];
-        regex_idx += 1;
-
-        // Find the BLOCK_END that's close to but before this match
-        while (block_end_idx + 1 < block_ends.items.len and
-            block_ends.items[block_end_idx] + BLOCK_END.len + 8 < matchStart)
-        {
-            block_end_idx += 1;
+            var matchStartOpt: ?usize = null;
+            if (matchOpt) |match| {
+                matchStartOpt = match.start + pos;
+            }
+            // std.debug.print("searching data of size {} at pos {}\n", .{ data.len, pos });
+            var regex_search_start = std.time.Timer.start() catch @panic("timer");
+            end = std.mem.indexOfPos(u8, data, pos, BLOCK_END).? - pos + BLOCK_END.len;
+            regex_search_total += regex_search_start.read();
+            if (matchStartOpt) |matchStart| {
+                offsetOpt = matchStart - pos;
+                if (offsetOpt) |offset| {
+                    while (end.? + 8 < offset) {
+                        end = end.? + std.mem.indexOf(u8, data[pos + end.? ..], BLOCK_END).? + BLOCK_END.len;
+                    }
+                }
+            } else {
+                break;
+            }
         }
-
-        if (block_end_idx >= block_ends.items.len) break;
-
-        const end_abs = block_ends.items[block_end_idx] + BLOCK_END.len;
-
-        // Check exit condition
-        if (end_abs + 8 == matchStart) {
-            object_block_time += t_total.read();
-            return .{
-                .position = end_abs,
-                .objects = objects,
-            };
+        if (end.? + 8 == offsetOpt.?) {
+            break;
         }
-
-        pos = matchStart;
+        pos = pos + offsetOpt.?;
 
         const test_ = data[pos .. pos + 4];
         if (!std.mem.eql(u8, test_, "\x1e\x00\x87\x02")) {
+            // Parse object here.
             var ob = parse_object(data, pos);
             ob.index = index;
             objects.append(ob) catch {
                 std.debug.panic("failed to append", .{});
             };
         }
+        offsetOpt = null;
+        pos += 31;
     }
-
-    // Fallback end position
-    var final_end = pos;
-    if (block_end_idx < block_ends.items.len) {
-        final_end = block_ends.items[block_end_idx] + BLOCK_END.len;
-    }
-
     object_block_time += t_total.read();
+    // std.debug.panic("asd", .{});
     return .{
-        .position = final_end,
+        .position = pos + end.?,
         .objects = objects,
     };
 }
