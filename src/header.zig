@@ -604,18 +604,6 @@ const parse_player_result = struct {
     device: ?u8,
 };
 
-var parse_player_search_time: u64 = 0;
-var parse_player_objects_time: u64 = 0;
-var parse_player_regex_time: u64 = 0;
-
-pub fn print_parse_player_times() void {
-    std.debug.print("\n=== parse_player internals ===\n", .{});
-    std.debug.print("needle search: {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_search_time)) / 1_000_000.0});
-    std.debug.print("object_block:  {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_objects_time)) / 1_000_000.0});
-    std.debug.print("regex match:   {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_regex_time)) / 1_000_000.0});
-    std.debug.print("==============================\n", .{});
-}
-
 pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader, player_number: usize, num_players: usize, save: f32) parse_player_result {
     var rep: usize = 9;
     if (save > 61.5) {
@@ -662,7 +650,6 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
 
     const all_bytes = headerReader.read();
 
-    var t_search = std.time.Timer.start() catch @panic("timer");
     // Combined needle: \x0b\x00 + any byte + \x00\x00\x00\x02\x00\x00
     const needle1: []const u8 = "\x0b\x00";
     const needle2: []const u8 = "\x00\x00\x00\x02\x00\x00";
@@ -682,16 +669,13 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
             break;
         }
     }
-    parse_player_search_time += t_search.read();
 
     if (startOpt) |start| {
-        var t_objects = std.time.Timer.start() catch @panic("timer");
         var r1 = object_block(allocator, all_bytes, start, player_number, 0);
 
         const r2 = object_block(allocator, all_bytes, r1.position, player_number, 1);
 
         const r3 = object_block(allocator, all_bytes, r2.position, player_number, 2);
-        parse_player_objects_time += t_objects.read();
 
         var end = r3.position;
         if (std.mem.eql(u8, all_bytes[end + 8 .. end + 10], BLOCK_END)) {
@@ -707,13 +691,12 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
         var device: ?u8 = null;
 
         if (save >= 37) {
-            var t_regex = std.time.Timer.start() catch @panic("timer");
             offset = headerReader.get_position();
             const data = headerReader.read_bytes(100);
             device = data[8];
             const r = mvzr.compile("\xff\xff\xff\xff\xff\xff\xff\xff.\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b").?;
             const player_end_match = r.match(data);
-            parse_player_regex_time += t_regex.read();
+
             if (player_end_match) |player_end| {
                 headerReader.seek(offset + player_end.end, .Start);
             } else {

@@ -19,43 +19,22 @@ const enums = @import("fast/enums.zig");
 const lib = @import("zig14_basic_lib");
 
 pub fn main() !void {
-    var total_timer = std.time.Timer.start() catch @panic("timer failed");
-
-    var init_timer = std.time.Timer.start() catch @panic("timer failed");
     try aoe_consts.initMaps();
-    const init_time = init_timer.read();
 
     // Use arena for all match data - don't deinit until after serialization
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var parse_timer = std.time.Timer.start() catch @panic("timer failed");
     const m = try parseMatch(allocator);
-    const parse_time = parse_timer.read();
 
     // Serialize match to JSON and write to file
-    var serialize_timer = std.time.Timer.start() catch @panic("timer failed");
-    const json = try definitions.serialize(m, allocator);
-    const serialize_time = serialize_timer.read();
 
-    var write_timer = std.time.Timer.start() catch @panic("timer failed");
+    const json = try definitions.serialize(m, allocator);
+
     const file = try std.fs.cwd().createFile("output.json", .{});
     defer file.close();
     try file.writeAll(json);
-    const write_time = write_timer.read();
-
-    const total_time = total_timer.read();
-
-    std.debug.print("\n=== Timing Report ===\n", .{});
-    std.debug.print("initMaps:      {d:>8.2} ms\n", .{@as(f64, @floatFromInt(init_time)) / 1_000_000.0});
-    std.debug.print("parseMatch:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_time)) / 1_000_000.0});
-    std.debug.print("serialize:     {d:>8.2} ms\n", .{@as(f64, @floatFromInt(serialize_time)) / 1_000_000.0});
-    std.debug.print("write file:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(write_time)) / 1_000_000.0});
-    std.debug.print("TOTAL:         {d:>8.2} ms\n", .{@as(f64, @floatFromInt(total_time)) / 1_000_000.0});
-    std.debug.print("=====================\n", .{});
-
-    std.debug.print("Wrote match to output.json ({} bytes)\n", .{json.len});
 }
 
 fn enrichAction(action: *definitions.Action, dataset: reference.DatasetResult, consts: std.json.Value) void {
@@ -166,7 +145,7 @@ fn enrichAction(action: *definitions.Action, dataset: reference.DatasetResult, c
 }
 
 pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
-    var t_file = std.time.Timer.start() catch @panic("timer");
+
     // Open the file
     const file = try std.fs.cwd().openFile("archers.aoe2record", .{});
     defer file.close();
@@ -180,27 +159,21 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
 
     // Read the file into the buffer
     _ = try file.readAll(buffer_full);
-    const file_read_time = t_file.read();
 
     var bufferReader = util.ByteReader.init(buffer_full);
 
-    var t_parse = std.time.Timer.start() catch @panic("timer");
     const data = parse(allocator, &bufferReader) catch @panic("failed to parse");
-    const parse_time = t_parse.read();
 
     _ = data.mod;
     const body_start_pos = bufferReader.get_position() - 4; // -4 for log version, matching Python
 
-    var t_ref = std.time.Timer.start() catch @panic("timer");
     const consts = reference.get_consts(allocator);
     const d = reference.get_dataset(allocator, data.version, data.mod);
-    const ref_time = t_ref.read();
 
     const dataset = d.json;
     // _ = consts;
     const map_id = get_map_id(data);
 
-    var t_map = std.time.Timer.start() catch @panic("timer");
     //_ = map_id;
     const md = map.get_map_data(
         allocator,
@@ -213,9 +186,7 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
         data.map.tiles,
         data.lobby.seed,
     );
-    const map_time = t_map.read();
 
-    var t_setup = std.time.Timer.start() catch @panic("timer");
     var rated: ?bool = null;
     var lobby: ?[]const u8 = null;
     var guid: ?[36]u8 = null;
@@ -415,9 +386,7 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
     }
 
     fastInit.meta(&bufferReader);
-    const setup_time = t_setup.read();
 
-    var t_actions = std.time.Timer.start() catch @panic("timer");
     var timestamp: u32 = 0;
     var resigned = std.ArrayList(u32).init(allocator);
     var actions = std.ArrayList(definitions.Action).init(allocator);
@@ -538,9 +507,7 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
             },
         }
     }
-    const actions_time = t_actions.read();
 
-    var t_finalize = std.time.Timer.start() catch @panic("timer");
     // Compute winner(s)
     for (teams.items) |team| {
         // Check if any player in the team has resigned
@@ -583,19 +550,6 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
         p.eapm = eapm_value;
         playersMap.put(player_id, p) catch @panic("eapm_update_failed");
     }
-
-    // Print each player's eAPM
-    std.debug.print("\n=== Player eAPM ===\n", .{});
-    var player_iter = playersMap.iterator();
-    while (player_iter.next()) |entry| {
-        const player = entry.value_ptr.*;
-        if (player.eapm) |eapm_value| {
-            std.debug.print("Player {s} (#{d}): {d} eAPM\n", .{ player.name, player.number, eapm_value });
-        } else {
-            std.debug.print("Player {s} (#{d}): No eAPM data\n", .{ player.name, player.number });
-        }
-    }
-    std.debug.print("==================\n\n", .{});
 
     // Build tiles array
     var tiles = std.ArrayList(definitions.Tile).init(allocator);
@@ -696,18 +650,6 @@ pub fn parseMatch(allocator: std.mem.Allocator) !definitions.Match {
     var match_hash: [40]u8 = undefined;
     _ = std.fmt.bufPrint(&match_hash, "{s}", .{std.fmt.fmtSliceHexLower(&match_hash_bytes)}) catch @panic("match_hash_fmt_failed");
 
-    const finalize_time = t_finalize.read();
-
-    std.debug.print("\n=== parseMatch Timing ===\n", .{});
-    std.debug.print("file read:     {d:>8.2} ms\n", .{@as(f64, @floatFromInt(file_read_time)) / 1_000_000.0});
-    std.debug.print("parse header:  {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_time)) / 1_000_000.0});
-    std.debug.print("ref data:      {d:>8.2} ms\n", .{@as(f64, @floatFromInt(ref_time)) / 1_000_000.0});
-    std.debug.print("map data:      {d:>8.2} ms\n", .{@as(f64, @floatFromInt(map_time)) / 1_000_000.0});
-    std.debug.print("setup:         {d:>8.2} ms\n", .{@as(f64, @floatFromInt(setup_time)) / 1_000_000.0});
-    std.debug.print("actions loop:  {d:>8.2} ms\n", .{@as(f64, @floatFromInt(actions_time)) / 1_000_000.0});
-    std.debug.print("finalize:      {d:>8.2} ms\n", .{@as(f64, @floatFromInt(finalize_time)) / 1_000_000.0});
-    std.debug.print("=========================\n", .{});
-
     return definitions.Match{
         .players = playersList.items,
         .teams = teamsSlice.items,
@@ -776,60 +718,31 @@ const parse_type = struct {
 pub fn parse(allocator: std.mem.Allocator, bufferReader: *util.ByteReader) !parse_type {
     // Get the allocator
 
-    var t_decompress = std.time.Timer.start() catch @panic("timer");
     var out2 = std.ArrayList(u8).init(allocator);
     // defer out2.deinit();
 
     var headerReader = header.decompress(&out2, bufferReader);
-    const decompress_time = t_decompress.read();
 
-    var t_version = std.time.Timer.start() catch @panic("timer");
     const res = try header.parse_version(&headerReader, bufferReader);
-    const version_time = t_version.read();
 
     if (res.version != util.Version.DE) {
         std.debug.print("only DE supported.", .{});
         std.process.exit(1);
     }
 
-    var t_de = std.time.Timer.start() catch @panic("timer");
     const de = header.parse_de(allocator, &headerReader, res.version, res.save, false);
-    const de_time = t_de.read();
 
-    var t_meta = std.time.Timer.start() catch @panic("timer");
     const parsed_meta = header.parse_metadata(&headerReader, res.save, false);
     const metadata = parsed_meta.metadata;
     const num_players = parsed_meta.num_players;
-    const meta_time = t_meta.read();
 
-    var t_pmap = std.time.Timer.start() catch @panic("timer");
     const pm = header.parse_map(allocator, &headerReader, res.version, res.save);
-    const pmap_time = t_pmap.read();
 
-    var t_players = std.time.Timer.start() catch @panic("timer");
     const el = header.parse_players(allocator, &headerReader, res.version, res.save, num_players);
-    const players_time = t_players.read();
-    header.print_parse_player_times();
-    header.print_object_block_times();
 
-    var t_scenario = std.time.Timer.start() catch @panic("timer");
     const s = header.parse_scenario(allocator, &headerReader, num_players, res.version, res.save);
-    const scenario_time = t_scenario.read();
 
-    var t_lobby = std.time.Timer.start() catch @panic("timer");
     const lobby = header.parse_lobby(allocator, &headerReader, res.version, res.save);
-    const lobby_time = t_lobby.read();
-
-    std.debug.print("\n=== parse() Timing ===\n", .{});
-    std.debug.print("decompress:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(decompress_time)) / 1_000_000.0});
-    std.debug.print("parse_version: {d:>8.2} ms\n", .{@as(f64, @floatFromInt(version_time)) / 1_000_000.0});
-    std.debug.print("parse_de:      {d:>8.2} ms\n", .{@as(f64, @floatFromInt(de_time)) / 1_000_000.0});
-    std.debug.print("parse_meta:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(meta_time)) / 1_000_000.0});
-    std.debug.print("parse_map:     {d:>8.2} ms\n", .{@as(f64, @floatFromInt(pmap_time)) / 1_000_000.0});
-    std.debug.print("parse_players: {d:>8.2} ms\n", .{@as(f64, @floatFromInt(players_time)) / 1_000_000.0});
-    std.debug.print("parse_scenario:{d:>8.2} ms\n", .{@as(f64, @floatFromInt(scenario_time)) / 1_000_000.0});
-    std.debug.print("parse_lobby:   {d:>8.2} ms\n", .{@as(f64, @floatFromInt(lobby_time)) / 1_000_000.0});
-    std.debug.print("======================\n", .{});
 
     return .{
         .version = res.version,
