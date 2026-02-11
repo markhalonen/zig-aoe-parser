@@ -605,6 +605,9 @@ const parse_player_result = struct {
 };
 
 pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader, player_number: usize, num_players: usize, save: f32) parse_player_result {
+    parse_player_calls += 1;
+    var t_total = std.time.Timer.start() catch @panic("timer");
+
     var rep: usize = 9;
     if (save > 61.5) {
         rep = num_players;
@@ -651,6 +654,7 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
     const all_bytes = headerReader.read();
 
     // Combined needle: \x0b\x00 + any byte + \x00\x00\x00\x02\x00\x00
+    var t_needle = std.time.Timer.start() catch @panic("timer");
     const needle1: []const u8 = "\x0b\x00";
     const needle2: []const u8 = "\x00\x00\x00\x02\x00\x00";
     var startOpt: ?usize = null;
@@ -669,13 +673,25 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
             break;
         }
     }
+    parse_player_needle_search_time += t_needle.read();
 
     if (startOpt) |start| {
-        var r1 = object_block(allocator, all_bytes, start, player_number, 0);
+        var t_obj_block = std.time.Timer.start() catch @panic("timer");
 
-        const r2 = object_block(allocator, all_bytes, r1.position, player_number, 1);
+        // Pre-compute all BLOCK_END positions once
+        var block_ends = std.ArrayList(usize).init(allocator);
+        var be_search: usize = 0;
+        while (std.mem.indexOfPos(u8, all_bytes, be_search, BLOCK_END)) |found_pos| {
+            block_ends.append(found_pos) catch break;
+            be_search = found_pos + 1;
+        }
 
-        const r3 = object_block(allocator, all_bytes, r2.position, player_number, 2);
+        var r1 = object_block(allocator, all_bytes, start, player_number, 0, block_ends.items);
+
+        const r2 = object_block(allocator, all_bytes, r1.position, player_number, 1, block_ends.items);
+
+        const r3 = object_block(allocator, all_bytes, r2.position, player_number, 2, block_ends.items);
+        parse_player_object_block_time += t_obj_block.read();
 
         var end = r3.position;
         if (std.mem.eql(u8, all_bytes[end + 8 .. end + 10], BLOCK_END)) {
@@ -691,11 +707,13 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
         var device: ?u8 = null;
 
         if (save >= 37) {
+            var t_end_regex = std.time.Timer.start() catch @panic("timer");
             offset = headerReader.get_position();
             const data = headerReader.read_bytes(100);
             device = data[8];
             const r = mvzr.compile("\xff\xff\xff\xff\xff\xff\xff\xff.\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b").?;
             const player_end_match = r.match(data);
+            parse_player_end_regex_time += t_end_regex.read();
 
             if (player_end_match) |player_end| {
                 headerReader.seek(offset + player_end.end, .Start);
@@ -731,24 +749,42 @@ pub fn parse_player(allocator: std.mem.Allocator, headerReader: *util.ByteReader
             },
             .device = device,
         };
+        parse_player_time += t_total.read();
         return res;
     } else {
         std.debug.panic("failed to find start", .{});
     }
 }
 
-// TODO: Dunno whats going on with the back slashes here, made some guesses based on tests in mvzr.
-const regexes: [9]mvzr.Regex = [9]mvzr.Regex{
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x00(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x01(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x02(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x03(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x04(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x05(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x06(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x07(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-    mvzr.compile("(\n|\x1e|F|P|\x14)\x08(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\\xff]").?,
-};
+// Manual byte scan replacement for regex pattern:
+// (\n|\x1e|F|P|\x14)\xNN(?!\xff\xff)(?!\x00\x00)....\xff\xff\xff\xff[^\xff]
+fn findObjectMatch(data: []const u8, player_byte: u8) ?usize {
+    if (data.len < 11) return null;
+    const limit = data.len - 10;
+    var i: usize = 0;
+    while (i < limit) : (i += 1) {
+        const b0 = data[i];
+        // Check first byte is one of: \n (0x0a), \x1e, F (0x46), P (0x50), \x14
+        if (b0 == 0x0a or b0 == 0x1e or b0 == 0x46 or b0 == 0x50 or b0 == 0x14) {
+            // Check player byte
+            if (data[i + 1] == player_byte) {
+                // Negative lookaheads: not \xff\xff and not \x00\x00
+                const b2 = data[i + 2];
+                const b3 = data[i + 3];
+                if (b2 == 0xff and b3 == 0xff) continue;
+                if (b2 == 0x00 and b3 == 0x00) continue;
+                // Check \xff\xff\xff\xff at offset +6
+                if (data[i + 6] == 0xff and data[i + 7] == 0xff and
+                    data[i + 8] == 0xff and data[i + 9] == 0xff)
+                {
+                    // Last byte not \xff
+                    if (data[i + 10] != 0xff) return i;
+                }
+            }
+        }
+    }
+    return null;
+}
 
 const BLOCK_END = "\x00\x0b";
 
@@ -792,23 +828,39 @@ const object_block_result = struct {
 
 var object_block_time: u64 = 0;
 var object_block_calls: u64 = 0;
-var regex_search_total: u64 = 0;
 var object_block_iterations: u64 = 0;
 var regex_calls: u64 = 0;
+var regex_match_time: u64 = 0;
+var indexof_time: u64 = 0;
+var parse_object_time: u64 = 0;
 
-pub fn print_object_block_times() void {
+// parse_player timing
+var parse_player_time: u64 = 0;
+var parse_player_calls: u64 = 0;
+var parse_player_needle_search_time: u64 = 0;
+var parse_player_object_block_time: u64 = 0;
+var parse_player_end_regex_time: u64 = 0;
+
+pub fn print_perf_times() void {
+    std.debug.print("\n=== parse_player performance ===\n", .{});
+    std.debug.print("total time:           {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_time)) / 1_000_000.0});
+    std.debug.print("calls:                {d}\n", .{parse_player_calls});
+    std.debug.print("needle search:        {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_needle_search_time)) / 1_000_000.0});
+    std.debug.print("object_block calls:   {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_object_block_time)) / 1_000_000.0});
+    std.debug.print("end regex:            {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_player_end_regex_time)) / 1_000_000.0});
+
     std.debug.print("\n=== object_block internals ===\n", .{});
-    std.debug.print("total time:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(object_block_time)) / 1_000_000.0});
-    std.debug.print("calls:    {d}\n", .{object_block_calls});
-    std.debug.print("iterations:    {d}\n", .{object_block_iterations});
-    std.debug.print("regex calls:    {d}\n", .{regex_calls});
-
-    std.debug.print("==============================\n", .{});
-
-    std.debug.print("regex total time:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(regex_search_total)) / 1_000_000.0});
+    std.debug.print("total time:           {d:>8.2} ms\n", .{@as(f64, @floatFromInt(object_block_time)) / 1_000_000.0});
+    std.debug.print("calls:                {d}\n", .{object_block_calls});
+    std.debug.print("iterations:           {d}\n", .{object_block_iterations});
+    std.debug.print("regex calls:          {d}\n", .{regex_calls});
+    std.debug.print("regex matchPos time:  {d:>8.2} ms\n", .{@as(f64, @floatFromInt(regex_match_time)) / 1_000_000.0});
+    std.debug.print("indexOf time:         {d:>8.2} ms\n", .{@as(f64, @floatFromInt(indexof_time)) / 1_000_000.0});
+    std.debug.print("parse_object time:    {d:>8.2} ms\n", .{@as(f64, @floatFromInt(parse_object_time)) / 1_000_000.0});
+    std.debug.print("================================\n", .{});
 }
 
-pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: usize, player_number: usize, index: u8) object_block_result {
+pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: usize, player_number: usize, index: u8, block_ends: []const usize) object_block_result {
     object_block_calls += 1;
     var t_total = std.time.Timer.start() catch @panic("timer");
     var objects = std.ArrayList(object).init(allocator);
@@ -816,6 +868,11 @@ pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: us
     var pos = posInput;
     var end: ?usize = null;
     var iteration: u32 = 0;
+    var be_idx: usize = 0; // Current index into block_ends
+
+    // Advance be_idx to first position >= posInput
+    while (be_idx < block_ends.len and block_ends[be_idx] < posInput) : (be_idx += 1) {}
+
     // std.debug.print("calling object_block\n", .{});
     while (true) {
         object_block_iterations += 1;
@@ -824,24 +881,33 @@ pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: us
             // NOOP
         } else {
             regex_calls += 1;
-            const matchOpt = regexes[player_number].matchPos(0, data[pos .. pos + 10000]);
+            var t_regex = std.time.Timer.start() catch @panic("timer");
+            const search_end = @min(pos + 10000, data.len);
+            const matchOpt = findObjectMatch(data[pos..search_end], @intCast(player_number));
+            regex_match_time += t_regex.read();
 
             var matchStartOpt: ?usize = null;
             if (matchOpt) |match| {
-                matchStartOpt = match.start + pos;
+                matchStartOpt = match + pos;
             }
             // std.debug.print("searching data of size {} at pos {}\n", .{ data.len, pos });
-            var regex_search_start = std.time.Timer.start() catch @panic("timer");
-            end = std.mem.indexOfPos(u8, data, pos, BLOCK_END).? - pos + BLOCK_END.len;
-            regex_search_total += regex_search_start.read();
+            var t_indexof = std.time.Timer.start() catch @panic("timer");
+
+            // Find first block_end >= pos using pre-computed positions
+            while (be_idx < block_ends.len and block_ends[be_idx] < pos) : (be_idx += 1) {}
+            end = block_ends[be_idx] - pos + BLOCK_END.len;
+
             if (matchStartOpt) |matchStart| {
                 offsetOpt = matchStart - pos;
                 if (offsetOpt) |offset| {
                     while (end.? + 8 < offset) {
-                        end = end.? + std.mem.indexOf(u8, data[pos + end.? ..], BLOCK_END).? + BLOCK_END.len;
+                        be_idx += 1;
+                        end = block_ends[be_idx] - pos + BLOCK_END.len;
                     }
                 }
-            } else {
+            }
+            indexof_time += t_indexof.read();
+            if (matchStartOpt == null) {
                 break;
             }
         }
@@ -853,11 +919,13 @@ pub fn object_block(allocator: std.mem.Allocator, data: []const u8, posInput: us
         const test_ = data[pos .. pos + 4];
         if (!std.mem.eql(u8, test_, "\x1e\x00\x87\x02")) {
             // Parse object here.
+            var t_parse = std.time.Timer.start() catch @panic("timer");
             var ob = parse_object(data, pos);
             ob.index = index;
             objects.append(ob) catch {
                 std.debug.panic("failed to append", .{});
             };
+            parse_object_time += t_parse.read();
         }
         offsetOpt = null;
         pos += 31;

@@ -28,6 +28,9 @@ pub fn main() !void {
 
     const m = try parseMatch(allocator);
 
+    // Print performance metrics
+    header.print_perf_times();
+
     // Serialize match to JSON and write to file
 
     const json = try definitions.serialize(m, allocator);
